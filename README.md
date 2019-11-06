@@ -14,6 +14,7 @@
         
         let runner = SimpleNIORunner(eventLoopGroupProvider: .shared(eventLoopGroup))
         let client = HTTPClient(eventLoopGroupProvider: .shared(eventLoopGroup))
+        defer { try! client.syncShutdown() }
         
         var pipelineBox: Box<Pipeline<HTTPClient.Request, ()>>! = nil
         
@@ -66,6 +67,5 @@
         
         runner.resume()
         runner.waitUntilQueueIsEmpty()
-        try! client.syncShutdown()
     }
 ```

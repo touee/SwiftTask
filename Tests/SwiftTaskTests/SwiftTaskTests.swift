@@ -96,6 +96,7 @@ final class SwiftTaskTests: XCTestCase {
         
         let runner = SimpleNIORunner(eventLoopGroupProvider: .shared(eventLoopGroup))
         let client = HTTPClient(eventLoopGroupProvider: .shared(eventLoopGroup))
+        defer { try! client.syncShutdown() }
         
         var pipelineBox: Box<Pipeline<HTTPClient.Request, ()>>! = nil
         
@@ -148,7 +149,6 @@ final class SwiftTaskTests: XCTestCase {
         
         runner.resume()
         runner.waitUntilQueueIsEmpty()
-        try! client.syncShutdown()
     }
     
     func testBenchmarkCrawling() {
