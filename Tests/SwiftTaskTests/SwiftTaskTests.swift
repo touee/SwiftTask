@@ -39,25 +39,23 @@ final class SwiftTaskTests: XCTestCase {
         XCTAssertEqual(caught, "10000")
     }
     
-    func createSynchronouslyTestingPipeline(_ total: Int, runner: Runner) -> Box<Pipeline<Int, ()>> {
-        var pipelineBox: Box<Pipeline<Int, ()>>! = nil
+    func createSynchronouslyTestingPipeline(_ total: Int, runner: Runner) -> Pipeline<Int, ()> {
+        var pipeline: Pipeline<Int, ()>! = nil
         
         func step(_ i: Int) {
             if i < total {
-                runner.addTask(Task(pipeline: pipelineBox.value, input: i), metadata: [], options: nil)
+                runner.addTask(Task(pipeline: pipeline, input: i), metadata: [], options: nil)
             } else {
                 XCTAssertEqual(i, total)
                 //                XCTAssertTrue(false)
             }
         }
         
-        pipelineBox = box {
-            buildPipeline(forInputType: Int.self)
-                | { $0 + 1 }
-                | { print($0); return $0 }
-                | step
-        }
-        return pipelineBox
+        pipeline = buildPipeline(forInputType: Int.self)
+            | { $0 + 1 }
+            | { print($0); return $0 }
+            | step
+        return pipeline
     }
     
     let N = 100
@@ -66,9 +64,9 @@ final class SwiftTaskTests: XCTestCase {
         
         let runner = SingleThreadRunner(label: "test")
         
-        let pipelineBox = createSynchronouslyTestingPipeline(N, runner: runner)
+        let pipeline = createSynchronouslyTestingPipeline(N, runner: runner)
         
-        runner.addTask(Task(pipeline: pipelineBox.value, input: 0))
+        runner.addTask(Task(pipeline: pipeline, input: 0))
         
         runner.resume()
         runner.waitUntilQueueIsEmpty()
@@ -80,9 +78,9 @@ final class SwiftTaskTests: XCTestCase {
         let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
         let runner = SimpleNIORunner(eventLoopGroupProvider: .shared(eventLoopGroup))
         
-        let pipelineBox = createSynchronouslyTestingPipeline(N, runner: runner)
+        let pipeline = createSynchronouslyTestingPipeline(N, runner: runner)
         
-        runner.addTask(Task(pipeline: pipelineBox.value, input: 0))
+        runner.addTask(Task(pipeline: pipeline, input: 0))
         print("first task added")
         runner.resume()
         print("runner resumed")
@@ -97,8 +95,6 @@ final class SwiftTaskTests: XCTestCase {
         let runner = SimpleNIORunner(eventLoopGroupProvider: .shared(eventLoopGroup))
         let client = HTTPClient(eventLoopGroupProvider: .shared(eventLoopGroup))
         defer { try! client.syncShutdown() }
-        
-        var pipelineBox: Box<Pipeline<HTTPClient.Request, ()>>! = nil
         
         var visited = Set<String>()
         let visitedLock = RWLock()
@@ -115,37 +111,36 @@ final class SwiftTaskTests: XCTestCase {
             return buf.readString(length: buf.readableBytes)!
         }
         
-        pipelineBox = box {
-            buildPipeline(forInputType: HTTPClient.Request.self)
-                | ensureAllowedURL
-                | { req in print("visiting: \(req.url.absoluteString)"); return req }
-                | Promising { el in { req in client.execute(request: req, eventLoop: .delegate(on: el)).map{ (req, $0) } } }
-                | { (req, resp) in (readByteBufferAllString(resp.body!), req.url) }
-                | { (body, requestURL) in (try SwiftSoup.parse(body), requestURL) }
-                | { (doc, requestURL) in try doc.select("a[href]").array().forEach {
-                    let realURL = URL(string: try $0.attr("href"), relativeTo: requestURL)!.absoluteString
+        var pipeline: Pipeline<HTTPClient.Request, ()>! = nil
+        pipeline = buildPipeline(forInputType: HTTPClient.Request.self)
+            | ensureAllowedURL
+            | { req in print("visiting: \(req.url.absoluteString)"); return req }
+            | Promising { el in { req in client.execute(request: req, eventLoop: .delegate(on: el)).map{ (req, $0) } } }
+            | { (req, resp) in (readByteBufferAllString(resp.body!), req.url) }
+            | { (body, requestURL) in (try SwiftSoup.parse(body), requestURL) }
+            | { (doc, requestURL) in try doc.select("a[href]").array().forEach {
+                let realURL = URL(string: try $0.attr("href"), relativeTo: requestURL)!.absoluteString
 
-                    do {
-                        visitedLock.rLock()
-                        defer { visitedLock.rUnlock() }
-                        if visited.contains(realURL) {
-                            return
-                        }
+                do {
+                    visitedLock.rLock()
+                    defer { visitedLock.rUnlock() }
+                    if visited.contains(realURL) {
+                        return
                     }
-                    do {
-                        visitedLock.wLock()
-                        defer { visitedLock.wUnlock() }
-                        visited.insert(realURL)
-                    }
-                    runner.addTask(Task(pipeline: pipelineBox.value, input: try HTTPClient.Request(url: realURL)))
-                    }}
-        }
+                }
+                do {
+                    visitedLock.wLock()
+                    defer { visitedLock.wUnlock() }
+                    visited.insert(realURL)
+                }
+                runner.addTask(Task(pipeline: pipeline, input: try HTTPClient.Request(url: realURL)))
+                }}
         
         runner.errorHandler = { task, metadata, err in
             print("error: \(task): \(err)")
         }
         
-        runner.addTask(Task(pipeline: pipelineBox.value, input: try! HTTPClient.Request(url: startURL)))
+        runner.addTask(Task(pipeline: pipeline, input: try! HTTPClient.Request(url: startURL)))
         
         runner.resume()
         runner.waitUntilQueueIsEmpty()
