@@ -1,0 +1,4 @@
+
+public struct PipelineShouldBreakError: Error {
+    
+}
