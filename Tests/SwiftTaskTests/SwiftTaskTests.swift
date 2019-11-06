@@ -121,16 +121,10 @@ final class SwiftTaskTests: XCTestCase {
             | { (doc, requestURL) in try doc.select("a[href]").array().forEach {
                 let realURL = URL(string: try $0.attr("href"), relativeTo: requestURL)!.absoluteString
 
-                do {
-                    visitedLock.rLock()
-                    defer { visitedLock.rUnlock() }
-                    if visited.contains(realURL) {
-                        return
-                    }
-                }
-                do {
-                    visitedLock.wLock()
-                    defer { visitedLock.wUnlock() }
+                if visitedLock.withRLock({
+                    visited.contains(realURL)
+                }) { return }
+                visitedLock.withWLockVoid {
                     visited.insert(realURL)
                 }
                 runner.addTask(Task(pipeline: pipeline, input: try HTTPClient.Request(url: realURL)))
