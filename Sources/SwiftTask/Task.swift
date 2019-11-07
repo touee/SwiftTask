@@ -2,6 +2,11 @@
 public struct Task<In, Out> {
     public let pipeline: Pipeline<In, Out>
     public let input: In
+    
+    public init(pipeline: Pipeline<In, Out>, input: In) {
+        self.pipeline = pipeline
+        self.input = input
+    }
 }
 
 public struct GeneralizedTask {
