@@ -3,9 +3,9 @@ import NIO
 
 /// A filter is just a function.
 public typealias Filter<In, Out> = (In) throws -> Out
-public typealias PromisingFilter<In, Out> = (EventLoop) -> ((In) throws -> EventLoopFuture<Out>)
+public typealias PromisingFilter<In, Out> = (EventLoop) -> (In) throws -> EventLoopFuture<Out>
 public typealias GeneralizedFilter = (Any) throws -> Any
-public typealias GeneralizedPromisingFilter = (EventLoop) -> ((Any) throws -> EventLoopFuture<Any>)
+public typealias GeneralizedPromisingFilter = (EventLoop) -> (Any) throws -> EventLoopFuture<Any>
 
 public struct Blocking<In, Out> {
     public let fn: Filter<In, Out>
@@ -14,7 +14,7 @@ public struct Blocking<In, Out> {
 
 public struct Promising<In, Out> {
     public let fnfn: PromisingFilter<In, Out>
-    init(_ fn: @escaping PromisingFilter<In, Out>) { self.fnfn = fn }
+    public init(_ fnfn: @escaping PromisingFilter<In, Out>) { self.fnfn = fnfn }
 }
 
 /// Record of a filter stored by Pipeline.
