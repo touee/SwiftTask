@@ -170,63 +170,215 @@ runner.waitUntilQueueIsEmpty()
 
 ## Example code
 
-### a simple crawler
+### simple [colly](https://github.com/gocolly/colly)-like crawling framework
 
-// TBD
-
-### #1
-
-(You can find it [here](./Tests/SwiftTaskTests/SwiftTaskTests.swift#L94))
+(still under construction)
 
 ```swift
-    func crawl(startURL: URL, allowedDomain: String) {
-        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
-        
-        let runner = SimpleNIORunner(eventLoopGroupProvider: .shared(eventLoopGroup))
-        let client = HTTPClient(eventLoopGroupProvider: .shared(eventLoopGroup))
-        defer { try! client.syncShutdown() }
-        
-        var visited = Set<String>()
-        let visitedLock = RWLock()
-        
-        func ensureAllowedURL(_ req: HTTPClient.Request) throws -> HTTPClient.Request {
-            if req.url.host != allowedDomain {
-                throw PipelineShouldBreakError()
-            }
-            return req
-        }
-        
-        func readByteBufferAllString(_ _buf: ByteBuffer) -> String {
-            var buf = _buf
-            return buf.readString(length: buf.readableBytes)!
-        }
-        
-        var pipeline: Pipeline<HTTPClient.Request, ()>! = nil
-        pipeline = buildPipeline(forInputType: HTTPClient.Request.self)
-            | ensureAllowedURL
-            | { req in print("visiting: \(req.url.absoluteString)"); return req }
-            | Promising { el in { req in client.execute(request: req, eventLoop: .delegate(on: el)).map{ (req, $0) } } }
-            | { (req, resp) in (readByteBufferAllString(resp.body!), req.url) }
-            | { (body, requestURL) in (try SwiftSoup.parse(body), requestURL) }
-            | { (doc, requestURL) in try doc.select("a[href]").array().forEach {
-                let realURL = URL(string: try $0.attr("href"), relativeTo: requestURL)!.absoluteString
 
-                if visitedLock.withRLock({
-                    visited.contains(realURL)
-                }) { return }
-                visitedLock.withWLockVoid {
-                    visited.insert(realURL)
-                }
-                runner.addTask(Task(pipeline: pipeline, input: try HTTPClient.Request(url: realURL)))
-                }}
+import Foundation
+
+import NIO
+import NIOConcurrencyHelpers
+import AsyncHTTPClient
+
+import SwiftTask
+
+import SwiftSoup
+
+public struct LimitRule {
+    /// Extra randomized duration before a new request
+    let randomDelay: TimeInterval
+    /// The number of allowed concurrent requests
+    let parallelism: Int
+}
+
+public class Collector {
+    
+    private let eventLoopGroup
+        = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+    private lazy var runner
+        = SimpleNIORunner(eventLoopGroupProvider: .shared(self.eventLoopGroup))
+    private lazy var client
+        = HTTPClient(eventLoopGroupProvider: .shared(self.eventLoopGroup))
+    
+    public var userAgent
+        = "SwiftTask Demo Crawler - https://github.com/touee/SwiftTask"
+    
+    public private(set) var allowedDomains = [String]()
+    public private(set) var globalLimitRule: LimitRule? = nil
+    private var globalRunningTaskCount = 0
+    private var pendingQueue = SimpleInMemoryQueue(for: String.self)
+    private var globalTaskLock = Lock()
+    
+    public typealias HTMLHandler
+        = (Collector, Elements, HTTPClient.Request, HTTPClient.Response) throws -> ()
+    private var htmlHandlers = [(selector: String, handler: HTMLHandler)]()
+    public func onHtml(_ selector: String, _ handler: @escaping HTMLHandler) {
+        self.htmlHandlers.append((selector, handler))
+    }
+    
+    public typealias RequestHandler = (HTTPClient.Request) throws -> ()
+    private var requestHandlers = [RequestHandler]()
+    public func onRequest(_ handler: @escaping RequestHandler) {
+        self.requestHandlers.append(handler)
+    }
+    
+    public enum Option {
+        case allowedDomains([String])
+    }
+    
+    private func evaluateOptions(_ option: Option) {
+        switch option {
+        case .allowedDomains(let domains):
+            self.allowedDomains += domains
+        }
+    }
+    
+    public func limit(_ rule: LimitRule) {
+        self.globalTaskLock.withLockVoid {
+            self.globalLimitRule = rule
+        }
+    }
+    
+    public init(_ options: Option...) {
+        for option in options {
+            self.evaluateOptions(option)
+        }
+        // self.runner.errorHandler = self.handleError
         
-        runner.errorHandler = { task, metadata, err in
-            print("error: \(task): \(err)")
+        self.runner.resultHandler = { (result, metadata, error) in
+            self.globalTaskLock.withLockVoid {
+                self.globalRunningTaskCount -= 1
+                if let rule = self.globalLimitRule, rule.parallelism <= self.globalRunningTaskCount {
+                    return
+                }
+                if let url = self.pendingQueue.dequeue() {
+                    self.runner.addTask(
+                        Task<String, Void>(pipeline: self.stringURLTaskPipeline!, input: url))
+                    self.globalRunningTaskCount += 1
+                }
+            }
         }
         
-        runner.addTask(Task(pipeline: pipeline, input: try! HTTPClient.Request(url: startURL)))
-        
-        runner.resume()
-        runner.waitUntilQueueIsEmpty()
     }
+    
+    private var visitedURLs = Set<String>()
+    private var visitedURLsLock = Lock()
+    
+    // since resume() can be called even if runner is already running, lock is not needed
+    private var firstVisit = true
+    public func visit(_ url: String) {
+
+        var hasVisited = false
+        self.visitedURLsLock.withLockVoid {
+            if self.visitedURLs.contains(url) {
+                hasVisited = true
+            } else {
+                self.visitedURLs.insert(url)
+            }
+        }
+        if hasVisited {
+            return
+        }
+        
+        self.globalTaskLock.withLockVoid {
+            if let rule = self.globalLimitRule,
+                self.globalRunningTaskCount >= rule.parallelism {
+                self.pendingQueue.enqueue(url)
+            } else {
+                self.runner.addTask(
+                    Task<String, Void>(pipeline: self.stringURLTaskPipeline!, input: url))
+                self.globalRunningTaskCount += 1
+            }
+        }
+        
+        if firstVisit {
+            self.firstVisit = false
+            self.runner.resume()
+        }
+    }
+    
+    public func wait() {
+        self.runner.waitUntilQueueIsEmpty()
+    }
+    
+    private var stringURLTaskPipeline: Pipeline<String, Void>! = nil
+    
+    public enum CollectorError: Error {
+        case invalidURL(rawURL: String)
+    }
+    
+    private func buildPipelines() {
+        
+        let requestBuildingPipeline = buildPipeline(forInputType: String.self)
+            // check url correctness
+            | { (rawURL: String) in
+                guard let url = URL(string: rawURL) else {
+                    throw CollectorError.invalidURL(rawURL: rawURL)
+                }
+                return url }
+            // make request object from url
+            | { (url: URL) in try HTTPClient.Request(url: url) }
+        
+        let requestExecutingPipeline = buildPipeline(forInputType: HTTPClient.Request.self)
+            // delay
+            | Promising { el in { (req: HTTPClient.Request) in
+                guard let rule = self.globalLimitRule else {
+                    return el.makeSucceededFuture(req)
+                }
+                let delay = Double.random(in: 0...1) * rule.randomDelay
+                let scheduleTask = el.scheduleTask(in:
+                TimeAmount.milliseconds(Int64(delay*1000.0))) { req }
+                return scheduleTask.futureResult }}
+            // onRequest
+            | { (req: HTTPClient.Request) in
+                for handler in self.requestHandlers {
+                    try handler(req)
+                }
+                return req }
+            // execute the request
+            | Promising { el in { (req: HTTPClient.Request) in
+                self.client.execute(request: req, eventLoop: .delegate(on: el))
+                    .map { resp in (req, resp) } }}
+        
+        let responseProcessingPipeline = buildPipeline(forInputType: (HTTPClient.Request, HTTPClient.Response).self)
+            // parse response body
+            | { (req: HTTPClient.Request, resp: HTTPClient.Response) in
+                var body = ""
+                if var bodyBytes = resp.body {
+                    body = bodyBytes.readString(length: bodyBytes.readableBytes) ?? ""
+                }
+                let doc = try SwiftSoup.parse(body)
+                return (req, resp, doc)}
+            // process result
+            | { (req: HTTPClient.Request, resp: HTTPClient.Response, doc: Document) in
+                for handlerItem in self.htmlHandlers {
+                    let elems = try doc.select(handlerItem.selector)
+                    if elems.isEmpty() {
+                        continue
+                    }
+                    try handlerItem.handler(self, elems, req, resp) } }
+        
+        self.stringURLTaskPipeline
+            = requestBuildingPipeline
+            | requestExecutingPipeline
+            | responseProcessingPipeline
+        
+    }
+    
+}
+
 ```
+
+
+
+## Ideas
+
+* in chain error handling: `… | filterX |! errorHandler | filterY | …`
+  * handlers catch errors in former chain
+  * handlers can recover / pass (throw error) / break (throw `PipelineShouldBreakError`) errors
+* combining computing filters: `… | filterX |+ filterY |+ filterZ | …`
+* middleware filter: `| Middleware { … }`
+  * middlewares can share data via a shared dict?
+
