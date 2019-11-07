@@ -40,7 +40,7 @@ public class SimpleNIORunner: Runner {
             }
             
             /// TODO: customizable -ize
-            if self.runningTasks > System.coreCount * 20 {
+            if self.runningTasks > System.coreCount {
                 self.status = .waitingBecauseSchedulerHasTooManyTasks
                 return
             }

@@ -1,0 +1,2 @@
+testBenchmarkCrawling: ~20s              (hanging after finished)
+colly:                 10.970115301s     (caused by timeout)      (min: 1.248935712 s)

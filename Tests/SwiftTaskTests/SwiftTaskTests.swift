@@ -90,10 +90,16 @@ final class SwiftTaskTests: XCTestCase {
     }
     
     func crawl(startURL: URL, allowedDomain: String) {
-        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
+        let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount * 2)
         
         let runner = SimpleNIORunner(eventLoopGroupProvider: .shared(eventLoopGroup))
-        let client = HTTPClient(eventLoopGroupProvider: .shared(eventLoopGroup))
+        
+        var clientConfiguration = HTTPClient.Configuration()
+        clientConfiguration.timeout.connect = TimeAmount.seconds(10)
+        clientConfiguration.timeout.read = TimeAmount.seconds(10)
+        let client = HTTPClient(
+            eventLoopGroupProvider: .shared(eventLoopGroup),
+            configuration: clientConfiguration)
         defer { try! client.syncShutdown() }
         
         var visited = Set<String>()
@@ -106,17 +112,19 @@ final class SwiftTaskTests: XCTestCase {
             return req
         }
         
-        func readByteBufferAllString(_ _buf: ByteBuffer) -> String {
-            var buf = _buf
+        func readByteBufferAllString(_ _buf: ByteBuffer?) -> String {
+            guard var buf = _buf else {
+                return ""
+            }
             return buf.readString(length: buf.readableBytes)!
         }
         
         var pipeline: Pipeline<HTTPClient.Request, ()>! = nil
         pipeline = buildPipeline(forInputType: HTTPClient.Request.self)
             | ensureAllowedURL
-            | { req in print("visiting: \(req.url.absoluteString)"); return req }
+            //| { req in print("visiting: \(req.url.absoluteString)"); return req }
             | Promising { el in { req in client.execute(request: req, eventLoop: .delegate(on: el)).map{ (req, $0) } } }
-            | { (req, resp) in (readByteBufferAllString(resp.body!), req.url) }
+            | { (req, resp) in (readByteBufferAllString(resp.body), req.url) }
             | { (body, requestURL) in (try SwiftSoup.parse(body), requestURL) }
             | { (doc, requestURL) in try doc.select("a[href]").array().forEach {
                 let realURL = URL(string: try $0.attr("href"), relativeTo: requestURL)!.absoluteString
@@ -141,8 +149,8 @@ final class SwiftTaskTests: XCTestCase {
     }
     
     func testBenchmarkCrawling() {
-//        crawl(startURL: URL(string: "http://somewhere")!,
-//              allowedDomain: "somewhere")
+      crawl(startURL: URL(string: "http://localhost:1234/bench/start")!,
+            allowedDomain: "localhost")
     }
     
     static var allTests = [
