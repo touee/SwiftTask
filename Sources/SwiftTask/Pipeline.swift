@@ -80,7 +80,7 @@ public final class Pipeline<In, Out> {
         return Pipeline(from: lhs, with: rhs)
     }
     
-    ///  New pipeline with a NIO filter appended
+    ///  New pipeline with an NIO filter appended
     private convenience init<X>(from pipeline: Pipeline<In, X>, with newFilter: Promising<X, Out>) {
         let wrapper: GeneralizedPromisingFilter = { (el: EventLoop) in { try (newFilter.fnfn(el)($0 as! X)).map { $0 as Any } } }
         self.init(from: pipeline, with: .nio(wrapper))
