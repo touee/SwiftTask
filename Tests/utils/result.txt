@@ -1,2 +1,3 @@
-testBenchmarkCrawling: ~20s              (hanging after finished)
-colly:                 10.970115301s     (caused by timeout)      (min: 1.248935712 s)
+testBenchmarkCrawling: ~20s for 10000 requests
+colly async:           ~0.8s~0.9 for 4200~4300 visits, but all other requests would produce error "socket: too many open files"
+colly sync:            ~1.9s for 10000 requests

@@ -4,6 +4,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net/http"
+	"sync"
 	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
@@ -13,7 +14,7 @@ import (
 
 func main() {
 
-	const MAX = 10000
+	const totalPages = 10000
 
 	var a1 = []byte(`<a href="/bench/`)
 	var a2 = []byte(`" />`)
@@ -21,33 +22,39 @@ func main() {
 	gin.DefaultWriter = ioutil.Discard
 	router := gin.Default()
 
-	count := uint32(0)
+	linkIDPool := make([]string, 0, totalPages)
+	for i := 0; i < totalPages; i++ {
+		linkIDPool = append(linkIDPool, uuid.New().String())
+	}
+	var linkIDPoolLock sync.Mutex
+
+	visitedPages := uint32(0)
 
 	router.GET("/bench/:id", func(ctx *gin.Context) {
 
-		nowCount := atomic.LoadUint32(&count)
-
-		if nowCount > MAX {
-			ctx.String(http.StatusNotFound, "")
-			return
-		}
+		nowVisitedPages := atomic.AddUint32(&visitedPages, 1)
 
 		id := ctx.Param("id")
-		println("now:", nowCount, id)
+		println("now:", nowVisitedPages, id)
 
-		r := (rand.Uint32() % 4) + 1
-		newCount := atomic.AddUint32(&count, r)
-
-		if newCount > MAX {
-			r = r - (newCount - MAX)
-		}
-
+		newlyLinks := rand.Intn(4) + 1
 		body := make([]byte, 0, 1000)
 
-		for i := int(r); i >= 0; i-- {
-			newID := uuid.New().String()
+		newIDs := func() []string {
+			linkIDPoolLock.Lock()
+			defer linkIDPoolLock.Unlock()
+
+			if len(linkIDPool) < newlyLinks {
+				newlyLinks = len(linkIDPool)
+			}
+			newIDs := linkIDPool[len(linkIDPool)-newlyLinks : len(linkIDPool)]
+			linkIDPool = linkIDPool[0 : len(linkIDPool)-newlyLinks]
+			return newIDs
+		}()
+
+		for _, id := range newIDs {
 			body = append(body, a1...)
-			body = append(body, []byte(newID)...)
+			body = append(body, id...)
 			body = append(body, a2...)
 		}
 
