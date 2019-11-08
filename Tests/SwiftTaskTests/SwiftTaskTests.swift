@@ -126,14 +126,24 @@ final class SwiftTaskTests: XCTestCase {
             return buf.readString(length: buf.readableBytes)!
         }
         
-        var pipeline: Pipeline<HTTPClient.Request, ()>! = nil
-        pipeline = buildPipeline(forInputType: HTTPClient.Request.self)
+//        let requestToBodyPipeline = buildPipeline(forInputType: HTTPClient.Request.self)
+//            | ensureAllowedURL
+//            //| { req in print("visiting: \(req.url.absoluteString)"); return req }
+//            | Promising { el in { req in client.execute(request: req, eventLoop: .delegate(on: el)).map{ (req, $0) } } }
+//            | { (req, resp) in (readByteBufferAllString(resp.body), req.url) }
+        
+        let syncRequestToBodyPipeline = buildPipeline(forInputType: HTTPClient.Request.self)
             | ensureAllowedURL
-            //| { req in print("visiting: \(req.url.absoluteString)"); return req }
-            | Promising { el in { req in client.execute(request: req, eventLoop: .delegate(on: el)).map{ (req, $0) } } }
-            | { (req, resp) in (readByteBufferAllString(resp.body), req.url) }
-            | { (body, requestURL) in (try SwiftSoup.parse(body), requestURL) }
-            | { (doc, requestURL) in try doc.select("a[href]").array().forEach {
+            |+ { (req: HTTPClient.Request) throws -> (String, URL) in
+                let url = req.url
+                var resp: URLResponse?
+                let data = try NSURLConnection.sendSynchronousRequest(URLRequest(url: url), returning: &resp)
+                return (String(data: data, encoding: .utf8) ?? "", url) }
+        
+        var pipeline: Pipeline<HTTPClient.Request, ()>! = nil
+        pipeline = syncRequestToBodyPipeline
+            |+ { (body, requestURL) in (try SwiftSoup.parse(body), requestURL) }
+            |+ { (doc, requestURL) in try doc.select("a[href]").array().forEach {
                 let realURL = URL(string: try $0.attr("href"), relativeTo: requestURL)!.absoluteString
 
                 if visitedLock.withRLock({
