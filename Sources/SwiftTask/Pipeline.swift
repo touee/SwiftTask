@@ -25,6 +25,7 @@ public struct FilterRecord {
         /// filter signature: @escaping (T) -> throws U
         /// e.g.: parsing json
         case computing(GeneralizedFilter)
+        case jointComputing([GeneralizedFilter])
         
         /// filter performs blocking I/O operation.
         /// e.g.: write/read files
@@ -39,8 +40,8 @@ public struct FilterRecord {
     
     /// filter itself
     let filter: FilterRecord.Filter
-    /// filter's return type
-    let outputType: Any.Type
+//    /// filter's return type
+//    let outputType: Any.Type
 }
 
 /// A Pipeline is a composition of filters.
@@ -53,22 +54,65 @@ public final class Pipeline<In, Out> {
         self.filters = []
     }
     
+    private init<X>(from pipeline: Pipeline<In, X>, with filter: FilterRecord.Filter) {
+        if case .jointComputing(let fns) = filter,
+            let last = pipeline.filters.last,
+            case .jointComputing(let lastFns) = last.filter {
+            self.filters = pipeline.filters[0..<pipeline.filters.count-1]
+                + [FilterRecord(filter: .jointComputing(lastFns + fns))]
+        }
+        else {
+            self.filters = pipeline.filters + [FilterRecord(filter: filter/*, outputType: Out.self*/)]
+        }
+    }
+    
     fileprivate init<X>(_ left: Pipeline<In, X>, _ right: Pipeline<X, Out>) {
         self.filters = left.filters + right.filters
     }
+    
+    public func callAsFunction(_ x: In, range: Range<Int>? = nil) throws -> Out {
+        var out: Any = x
+        var filters = ArraySlice(self.filters)
+        if let range = range {
+            filters = self.filters[range]
+        }
+        for record in filters {
+            switch (record.filter) {
+            case .computing(let fn):
+                out = try fn(out)
+            case .jointComputing(let fns):
+                for fn in fns {
+                    out = try fn(out)
+                }
+            case .blocking(let fn):
+                out = try fn(out)
+            case .nio(_):
+                throw BadRunnerEnvironmentError()
+            }
+        }
+        return out as! Out
+    }
+}
+
+infix operator |+: AdditionPrecedence
+extension Pipeline {
+    
     public static func | <X>(lhs: Pipeline<In, X>, rhs: Pipeline<X, Out>) -> Pipeline<In, Out> { return Pipeline(lhs, rhs) }
     
-    private init<X>(from pipeline: Pipeline<In, X>, with filter: FilterRecord.Filter) {
-        self.filters = pipeline.filters + [FilterRecord(filter: filter, outputType: Out.self)]
-    }
-    
-    /// New pipeline with a filter appended
-    private convenience init<X>(from pipeline: Pipeline<In, X>, with newFilter: @escaping Filter<X, Out>) {
+    /// New pipeline with a computing filter appended
+    private convenience init<X>(from pipeline: Pipeline<In, X>, with newFilter: @escaping Filter<X, Out>, isJoint: Bool) {
         let wrapper: GeneralizedFilter = { try newFilter($0 as! X) }
-        self.init(from: pipeline, with: .computing(wrapper))
+        if isJoint {
+            self.init(from: pipeline, with: .jointComputing([wrapper]))
+        } else {
+            self.init(from: pipeline, with: .computing(wrapper))
+        }
     }
     public static func | <X>(lhs: Pipeline<In, X>, rhs: @escaping Filter<X, Out>) -> Pipeline<In, Out> {
-        return Pipeline(from: lhs, with: rhs)
+        return Pipeline(from: lhs, with: rhs, isJoint: false)
+    }
+    public static func |+ <X>(lhs: Pipeline<In, X>, rhs: @escaping Filter<X, Out>) -> Pipeline<In, Out> {
+        return Pipeline(from: lhs, with: rhs, isJoint: true)
     }
     
     /// New pipeline with a blocking filter appended
@@ -88,21 +132,6 @@ public final class Pipeline<In, Out> {
     public static func | <X>(lhs: Pipeline<In, X>, rhs: Promising<X, Out>) -> Pipeline<In, Out> {
         return Pipeline(from: lhs, with: rhs)
     }
-    
-    fileprivate func callAsFunction(_ x: In) throws -> Out {
-        var out: Any = x
-        for record in self.filters {
-            switch (record.filter) {
-            case .computing(let fn):
-                out = try fn(out)
-            case .blocking(let fn):
-                out = try fn(out)
-            case .nio(_):
-                throw BadRunnerEnvironmentError()
-            }
-        }
-        return out as! Out
-    }
 }
 
 public func buildPipeline<T>(forInputType t: T.Type) -> Pipeline<T, T> {
@@ -115,13 +144,13 @@ public func | <In, Out>(lhr: In, rhs: Pipeline<In, Out>) throws -> Out {
 
 public final class GeneralizedPipeline {
     public let filters: [FilterRecord]
-    public let inputType: Any.Type
-    public var outputType: Any.Type {
-        return self.filters.last?.outputType ?? inputType
-    }
+//    public let inputType: Any.Type
+//    public var outputType: Any.Type {
+//        return self.filters.last?.outputType ?? inputType
+//    }
     
     init<In, Out>(from pipeline: Pipeline<In, Out>) {
-        self.inputType = In.self
+//        self.inputType = In.self
         self.filters = pipeline.filters
     }
 }

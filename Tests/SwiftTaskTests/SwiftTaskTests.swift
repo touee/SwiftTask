@@ -51,14 +51,21 @@ final class SwiftTaskTests: XCTestCase {
             }
         }
         
+//        pipeline = buildPipeline(forInputType: Int.self)
+//            | { $0 + 1 }
+//            | { print($0); return $0 }
+//            | step
         pipeline = buildPipeline(forInputType: Int.self)
-            | { $0 + 1 }
-            | { print($0); return $0 }
-            | step
+            |+ { $0 + 1 }
+            |+ { print($0); return $0 }
+            |+ step
+//        pipeline = buildPipeline(forInputType: Int.self)
+//            | { let i = $0 + 1; print(i+1); step(i+1); return () }
+
         return pipeline
     }
     
-    let N = 100
+    let N = 10000
     
     func testSingleThreadRunner() {
         

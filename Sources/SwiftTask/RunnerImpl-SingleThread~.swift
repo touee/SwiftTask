@@ -44,6 +44,10 @@ public class SingleThreadRunner: Runner {
                 switch (record.filter) {
                 case .computing(let fn):
                     out = try fn(out)
+                case .jointComputing(let fns):
+                    for fn in fns {
+                        out = try fn(out)
+                    }
                 case .blocking(let fn):
                     out = try fn(out)
                 default: throw BadRunnerEnvironmentError()

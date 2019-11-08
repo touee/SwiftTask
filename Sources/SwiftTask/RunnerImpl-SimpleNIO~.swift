@@ -159,6 +159,14 @@ public class SimpleNIORunner: Runner {
                 self.group.next().submit {
                     try fn(item.input)
                     }.whenComplete(onComplete)
+            case .jointComputing(let fns):
+                self.group.next().submit {
+                    var out = item.input
+                    for fn in fns {
+                        out = try fn(out)
+                    }
+                    return out
+                    }.whenComplete(onComplete)
             case .blocking(let fn):
                 self.threadPoolForBlockingIO.runIfActive(eventLoop: self.group.next()) {
                     try fn(item.input)
