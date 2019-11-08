@@ -136,7 +136,7 @@ A task is just a pipeline binded with some input value, and sometimes binded wit
 
 ```swift
 // create a task
-let task42 = Task(pipeline: pipeline6, input 42)
+let task42 = Task(pipeline: pipeline6, input: 42)
 
 // executing task directly has not yet been implemented
 ```
