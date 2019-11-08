@@ -102,8 +102,8 @@ final class SwiftTaskTests: XCTestCase {
         let runner = SimpleNIORunner(eventLoopGroupProvider: .shared(eventLoopGroup))
         
         var clientConfiguration = HTTPClient.Configuration()
-        clientConfiguration.timeout.connect = TimeAmount.seconds(10)
-        clientConfiguration.timeout.read = TimeAmount.seconds(10)
+        clientConfiguration.timeout.connect = .seconds(10)
+        clientConfiguration.timeout.read = .seconds(10)
         let client = HTTPClient(
             eventLoopGroupProvider: .shared(eventLoopGroup),
             configuration: clientConfiguration)

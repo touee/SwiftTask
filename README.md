@@ -221,7 +221,7 @@ c.onHtml("span.next-button") { c, elem, req, resp in
     c.visit(t)
 }
 
-c.limit(LimitRule(randomDelay: TimeAmount.seconds(5), parallelism: 2))
+c.limit(LimitRule(randomDelay: .seconds(5), parallelism: 2))
 
 c.onRequest { req in
     print("Visiting \(req.url)")
@@ -385,8 +385,8 @@ public class Collector {
     
     private func buildClient() -> HTTPClient {
         var config = HTTPClient.Configuration()
-        config.timeout.connect = TimeAmount.seconds(10)
-        config.timeout.read = TimeAmount.seconds(10)
+        config.timeout.connect = .seconds(10)
+        config.timeout.read = .seconds(10)
 //        config.proxy = .server(host: , port: )
         config.redirectConfiguration = .follow(max: 10, allowCycles: false)
         let client = HTTPClient(
