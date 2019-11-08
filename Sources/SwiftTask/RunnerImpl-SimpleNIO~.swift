@@ -115,7 +115,12 @@ public class SimpleNIORunner: Runner {
         private var runningTaskQueue = SimpleInMemoryQueue(for: RunningTaskItem.self)
         
         /// TODO: customizable -ize
-        private lazy var threadPoolForBlockingIO = NIOThreadPool(numberOfThreads: System.coreCount)
+        private lazy var threadPoolForBlockingIO = buildThreadPool()
+        private func buildThreadPool() -> NIOThreadPool {
+            let pool = NIOThreadPool(numberOfThreads: System.coreCount)
+            pool.start()
+            return pool
+        }
         
         private func local_processRunning() {
             

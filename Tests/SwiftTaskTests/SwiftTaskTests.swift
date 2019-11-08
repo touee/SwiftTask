@@ -134,7 +134,7 @@ final class SwiftTaskTests: XCTestCase {
         
         let syncRequestToBodyPipeline = buildPipeline(forInputType: HTTPClient.Request.self)
             | ensureAllowedURL
-            |+ { (req: HTTPClient.Request) throws -> (String, URL) in
+            | Blocking { (req: HTTPClient.Request) throws -> (String, URL) in
                 let url = req.url
                 var resp: URLResponse?
                 let data = try NSURLConnection.sendSynchronousRequest(URLRequest(url: url), returning: &resp)
