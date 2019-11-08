@@ -18,7 +18,8 @@ Currently, you can define three kinds of filters:
 * Blocking filters: filters that perform blocking tasks;
 * NIO filters: filters that return EventLoopFuture. It must be wrapped in a function that takes EventLoop as input. It can only be used in a [runner](#Runner) that uses SwiftNIO.
 
-Example:
+<details>
+<summary>Example</summary>
 
 ```swift
 // computing filter:
@@ -42,13 +43,16 @@ func executeRequest(_ el: EventLoop)
 }
 ```
 
+</details>
+
 
 
 ### Pipeline
 
 A pipeline is a composition of filters. its signature is `Pipeline<In, Out>`, where `In` is the input type, and `Out` is the output type.
 
-Usage:
+<details>
+<summary>Usage</summary>
 
 ```swift
 // (assuming we have `client: HTTPClient`, `lock: Lock`, `fileHandle: FileHandle`)
@@ -119,13 +123,16 @@ pipelineX = buildPipeline(forInputType: In)
     | { print(pipelineX) }
 ```
 
+</details>
+
 
 
 ### Task
 
 A task is just a pipeline binded with some input value, and sometimes binded with some metadata.
 
-Usage:
+<details>
+<summary>Usage</summary>
 
 ```swift
 // create a task
@@ -133,6 +140,8 @@ let task42 = Task(pipeline: pipeline6, input 42)
 
 // executing task directly has not yet been implemented
 ```
+
+</details>
 
 
 
@@ -147,7 +156,8 @@ We currently have two runner implementation:
 
 Apparently, if you want to execute NIO tasks, you can only choose `SimpleNIORunner` at present. (Even if you don't have this demand, if you want concurrence, this is still the only reasonable choice.)
 
-Usage: 
+<details>
+<summary>Usage</summary>
 
 ``` swift
 // (assuming the runner instance is already created as `runner`)
@@ -166,13 +176,71 @@ runner.resume()
 runner.waitUntilQueueIsEmpty()
 ```
 
+</details>
+
 
 
 ## Example code
 
-### simple [colly](https://github.com/gocolly/colly)-like crawling framework
+### simple [Colly](https://github.com/gocolly/colly)-like crawling framework
 
-(still under construction)
+This example attempts to replicate [Colly's reddit example](http://go-colly.org/docs/examples/reddit/)
+
+<details>
+  <summary>Colly style scraping project</summary>
+
+```swift
+
+struct Item {
+    var storyURL: String = ""
+    var source: String = ""
+    var comments: String = ""
+    var crawledAt: Date! = nil
+    var title: String = ""
+}
+
+var stories = [Item]()
+let storiesLock = Lock()
+
+let c = Collector(
+    .allowedDomains(["old.reddit.com"])
+)
+
+c.onHtml(".top-matter") { c, elem, req, resp in
+    var item = Item()
+    item.storyURL = try elem.select("a[data-event-action=title]").attr("href")
+    item.source = ""
+    item.title = try elem.select("a[data-event-action=title]").text()
+    item.comments = try elem.select("a[data-event-action=comments]").attr("href")
+    item.crawledAt = Date()
+    storiesLock.withLockVoid { stories.append(item) }
+}
+
+c.onHtml("span.next-button") { c, elem, req, resp in
+    let t = try elem.select("a").attr("href")
+    c.visit(t)
+}
+
+c.limit(LimitRule(randomDelay: TimeAmount.seconds(5), parallelism: 2))
+
+c.onRequest { req in
+    print("Visiting \(req.url)")
+}
+
+let subreddits = [ "crawling", "scraping", "test3" ]
+for sub in subreddits {
+    c.visit("https://old.reddit.com/r/" + sub + "/")
+}
+
+c.wait()
+print(stories)
+
+```
+
+</details>
+
+<details>
+  <summary>Collector implementation</summary>
 
 ```swift
 
@@ -188,7 +256,7 @@ import SwiftSoup
 
 public struct LimitRule {
     /// Extra randomized duration before a new request
-    let randomDelay: TimeInterval
+    let randomDelay: TimeAmount
     /// The number of allowed concurrent requests
     let parallelism: Int
 }
@@ -199,8 +267,7 @@ public class Collector {
         = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
     private lazy var runner
         = SimpleNIORunner(eventLoopGroupProvider: .shared(self.eventLoopGroup))
-    private lazy var client
-        = HTTPClient(eventLoopGroupProvider: .shared(self.eventLoopGroup))
+    private lazy var client = buildClient()
     
     public var userAgent
         = "SwiftTask Demo Crawler - https://github.com/touee/SwiftTask"
@@ -212,7 +279,7 @@ public class Collector {
     private var globalTaskLock = Lock()
     
     public typealias HTMLHandler
-        = (Collector, Elements, HTTPClient.Request, HTTPClient.Response) throws -> ()
+        = (Collector, Element, HTTPClient.Request, HTTPClient.Response) throws -> ()
     private var htmlHandlers = [(selector: String, handler: HTMLHandler)]()
     public func onHtml(_ selector: String, _ handler: @escaping HTMLHandler) {
         self.htmlHandlers.append((selector, handler))
@@ -223,6 +290,8 @@ public class Collector {
     public func onRequest(_ handler: @escaping RequestHandler) {
         self.requestHandlers.append(handler)
     }
+    
+    private lazy var stringURLTaskPipeline = self.buildPipelines()
     
     public enum Option {
         case allowedDomains([String])
@@ -245,20 +314,27 @@ public class Collector {
         for option in options {
             self.evaluateOptions(option)
         }
-        // self.runner.errorHandler = self.handleError
         
-        self.runner.resultHandler = { (result, metadata, error) in
+        self.runner.resultHandler = { (task, metadata, result) in
             self.globalTaskLock.withLockVoid {
                 self.globalRunningTaskCount -= 1
-                if let rule = self.globalLimitRule, rule.parallelism <= self.globalRunningTaskCount {
-                    return
-                }
-                if let url = self.pendingQueue.dequeue() {
+                while true {
+                    let parallelism = self.globalLimitRule?.parallelism ?? 0
+                    let shouldAddTask = parallelism == 0 || self.globalRunningTaskCount < parallelism
+                    if !shouldAddTask { break }
+                    guard let url = self.pendingQueue.dequeue() else {
+                        break
+                    }
                     self.runner.addTask(
-                        Task<String, Void>(pipeline: self.stringURLTaskPipeline!, input: url))
+                        Task<String, Void>(pipeline: self.stringURLTaskPipeline, input: url))
                     self.globalRunningTaskCount += 1
                 }
+
             }
+        }
+        
+        self.runner.errorHandler = { (task, metadata, error) in
+            print(error)
         }
         
     }
@@ -288,7 +364,7 @@ public class Collector {
                 self.pendingQueue.enqueue(url)
             } else {
                 self.runner.addTask(
-                    Task<String, Void>(pipeline: self.stringURLTaskPipeline!, input: url))
+                    Task<String, Void>(pipeline: self.stringURLTaskPipeline, input: url))
                 self.globalRunningTaskCount += 1
             }
         }
@@ -303,13 +379,23 @@ public class Collector {
         self.runner.waitUntilQueueIsEmpty()
     }
     
-    private var stringURLTaskPipeline: Pipeline<String, Void>! = nil
-    
     public enum CollectorError: Error {
         case invalidURL(rawURL: String)
     }
     
-    private func buildPipelines() {
+    private func buildClient() -> HTTPClient {
+        var config = HTTPClient.Configuration()
+        config.timeout.connect = TimeAmount.seconds(10)
+        config.timeout.read = TimeAmount.seconds(10)
+//        config.proxy = .server(host: , port: )
+        config.redirectConfiguration = .follow(max: 10, allowCycles: false)
+        let client = HTTPClient(
+            eventLoopGroupProvider: .shared(self.eventLoopGroup),
+            configuration: config)
+        return client
+    }
+    
+    private func buildPipelines() -> Pipeline<String, Void> {
         
         let requestBuildingPipeline = buildPipeline(forInputType: String.self)
             // check url correctness
@@ -327,10 +413,13 @@ public class Collector {
                 guard let rule = self.globalLimitRule else {
                     return el.makeSucceededFuture(req)
                 }
-                let delay = Double.random(in: 0...1) * rule.randomDelay
-                let scheduleTask = el.scheduleTask(in:
-                TimeAmount.milliseconds(Int64(delay*1000.0))) { req }
-                return scheduleTask.futureResult }}
+                let delay = TimeAmount.nanoseconds(Int64.random(in: 0...rule.randomDelay.nanoseconds))
+                return el.scheduleTask(in: delay, { req }).futureResult }}
+            // add header
+            | { (_req: HTTPClient.Request) in
+                var req = _req
+                req.headers.add(name: "User-Agent", value: self.userAgent)
+                return req }
             // onRequest
             | { (req: HTTPClient.Request) in
                 for handler in self.requestHandlers {
@@ -340,8 +429,9 @@ public class Collector {
             // execute the request
             | Promising { el in { (req: HTTPClient.Request) in
                 self.client.execute(request: req, eventLoop: .delegate(on: el))
-                    .map { resp in (req, resp) } }}
-        
+                    .map { (resp: HTTPClient.Response) in
+                        (req, resp) } }}
+
         let responseProcessingPipeline = buildPipeline(forInputType: (HTTPClient.Request, HTTPClient.Response).self)
             // parse response body
             | { (req: HTTPClient.Request, resp: HTTPClient.Response) in
@@ -358,18 +448,19 @@ public class Collector {
                     if elems.isEmpty() {
                         continue
                     }
-                    try handlerItem.handler(self, elems, req, resp) } }
+                    for elem in elems.array() {
+                        try handlerItem.handler(self, elem, req, resp) } } }
         
-        self.stringURLTaskPipeline
-            = requestBuildingPipeline
+        return requestBuildingPipeline
             | requestExecutingPipeline
             | responseProcessingPipeline
-        
     }
     
 }
 
 ```
+
+</details>
 
 
 
@@ -381,4 +472,3 @@ public class Collector {
 * combining computing filters: `… | filterX |+ filterY |+ filterZ | …`
 * middleware filter: `| Middleware { … }`
   * middlewares can share data via a shared dict?
-
