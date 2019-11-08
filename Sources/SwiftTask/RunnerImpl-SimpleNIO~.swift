@@ -9,80 +9,80 @@ public enum EventLoopGroupProvider {
 
 public class SimpleNIORunner: Runner {  
     
-    class Firer {
+    class PendingTaskManager {
         
         private let localLoop: EventLoop
         private let runner: SimpleNIORunner
-        fileprivate var scheduler: Scheduler!
+        fileprivate var runningManager: RunningTaskManager!
         
         fileprivate init(on eventLoop: EventLoop, runner: SimpleNIORunner) {
             self.localLoop = eventLoop
             self.runner = runner
         }
         
-        private enum Status {
+        private enum PendingManagerStatus {
             case paused
-            case waitingBecauseQueueIsEmpty
-            case waitingBecauseSchedulerHasTooManyTasks
+            case waitingBecausePendingQueueIsEmpty
+            case waitingBecauseTooManyRunningTasks
             case running
         }
-        private var status = Status.paused
+        private var pendingManagerStatus = PendingManagerStatus.paused
         
         private typealias PendingTaskItem = (task: GeneralizedTask, metadata: Packable?)
         private var pendingTaskQueue = SimpleInMemoryQueue(for: PendingTaskItem.self)
         
-        private var runningTasks = 0
+        private var runningTaskCount = 0
         
-        private func local_process() {
+        private func local_processPending() {
             
-            if self.status == .paused {
+            if self.pendingManagerStatus == .paused {
                 return
             }
             
             /// TODO: customizable -ize
-            if self.runningTasks > System.coreCount {
-                self.status = .waitingBecauseSchedulerHasTooManyTasks
+            if self.runningTaskCount > System.coreCount {
+                self.pendingManagerStatus = .waitingBecauseTooManyRunningTasks
                 return
             }
             guard let item = self.pendingTaskQueue.dequeue() else {
-                if self.runningTasks != 0 {
-                    self.status = .waitingBecauseQueueIsEmpty
+                if self.runningTaskCount != 0 {
+                    self.pendingManagerStatus = .waitingBecausePendingQueueIsEmpty
                 } else {
-                    self.status = .paused
+                    self.pendingManagerStatus = .paused
                     self.runner.reportNoTasksRemain()
                 }
                 return
             }
             
-            self.runningTasks += 1
-            self.scheduler.executeTask(item.task, item.metadata)
+            self.runningTaskCount += 1
+            self.runningManager.executeTask(item.task, item.metadata)
             
-            self.localLoop.execute(self.local_process)
-            self.status = .running
+            self.localLoop.execute(self.local_processPending)
+            self.pendingManagerStatus = .running
             
         }
         
-        private func local_resume() {
-            if self.status != .running {
-                self.localLoop.execute(self.local_process)
-                self.status = .running
+        private func local_resumePendingManager() {
+            if self.pendingManagerStatus != .running {
+                self.localLoop.execute(self.local_processPending)
+                self.pendingManagerStatus = .running
             }
         }
         
-        fileprivate func resume() {
-            self.localLoop.execute(self.local_resume)
+        fileprivate func resumePendingManager() {
+            self.localLoop.execute(self.local_resumePendingManager)
         }
         
         fileprivate func reportTaskDone() {
             self.localLoop.execute {
-                self.runningTasks -= 1
-                if self.status == .waitingBecauseSchedulerHasTooManyTasks {
-                    self.local_resume()
-                } else if self.status == .waitingBecauseQueueIsEmpty
-                    && self.runningTasks == 0
+                self.runningTaskCount -= 1
+                if self.pendingManagerStatus == .waitingBecauseTooManyRunningTasks {
+                    self.local_resumePendingManager()
+                } else if self.pendingManagerStatus == .waitingBecausePendingQueueIsEmpty
+                    && self.runningTaskCount == 0
                     && self.pendingTaskQueue.count == 0 {
                     // let firer reports that there are no more tasks
-                    self.local_resume()
+                    self.local_resumePendingManager()
                 }
             }
         }
@@ -92,19 +92,19 @@ public class SimpleNIORunner: Runner {
                 self.pendingTaskQueue.enqueue(
                     PendingTaskItem(GeneralizedTask(from: task), metadata)
                 )
-                if self.status == .waitingBecauseQueueIsEmpty {
-                    self.local_resume()
+                if self.pendingManagerStatus == .waitingBecausePendingQueueIsEmpty {
+                    self.local_resumePendingManager()
                 }
             }
         }
         
     }
     
-    class Scheduler {
+    class RunningTaskManager {
         
         private let localLoop: EventLoop
         private let runner: SimpleNIORunner
-        fileprivate weak var firer: Firer!
+        fileprivate weak var pendingManager: PendingTaskManager!
         private let group: EventLoopGroup
         
         fileprivate init(on eventLoop: EventLoop, runner: SimpleNIORunner, controlling group: EventLoopGroup) {
@@ -113,22 +113,22 @@ public class SimpleNIORunner: Runner {
             self.group = group
         }
         
-        private enum Status {
-            case waitingBecauseQueueIsEmpty
+        private enum RunningManagerStatus {
+            case waitingBecauseRunningQueueIsEmpty
             case running
         }
-        private var status = Status.waitingBecauseQueueIsEmpty
+        private var runningManagerStatus = RunningManagerStatus.waitingBecauseRunningQueueIsEmpty
         
         typealias RunningTaskItem = (task: GeneralizedTask, position: Int, input: Any, metadata: Packable?)
         private var runningTaskQueue = SimpleInMemoryQueue(for: RunningTaskItem.self)
         
         /// TODO: customizable -ize
-        private let threadPoolForBlockingIO = NIOThreadPool(numberOfThreads: System.coreCount)
+        private lazy var threadPoolForBlockingIO = NIOThreadPool(numberOfThreads: System.coreCount)
         
-        private func local_process() {
+        private func local_processRunning() {
             
             guard let item = self.runningTaskQueue.dequeue() else {
-                self.status = .waitingBecauseQueueIsEmpty
+                self.runningManagerStatus = .waitingBecauseRunningQueueIsEmpty
                 return
             }
             
@@ -183,21 +183,21 @@ public class SimpleNIORunner: Runner {
                     }.whenComplete(onComplete)
             }
             
-            self.localLoop.execute(self.local_process)
-            self.status = .running
+            self.localLoop.execute(self.local_processRunning)
+            self.runningManagerStatus = .running
 
         }
         
         private func local_onTaskDone() {
-            self.firer.reportTaskDone()
+            self.pendingManager.reportTaskDone()
         }
         
         private func local_enqueueTask(_ task: GeneralizedTask, _ position: Int, _ input: Any, _ metadata: Packable?) {
             self.runningTaskQueue.enqueue(
                 RunningTaskItem(task, position, input, metadata))
-            if self.status == .waitingBecauseQueueIsEmpty {
-                self.localLoop.execute(self.local_process)
-                self.status = .running
+            if self.runningManagerStatus == .waitingBecauseRunningQueueIsEmpty {
+                self.localLoop.execute(self.local_processRunning)
+                self.runningManagerStatus = .running
             }
         }
         
@@ -214,7 +214,7 @@ public class SimpleNIORunner: Runner {
     
     private let eventLoopGroup: EventLoopGroup
     
-    private var firer: Firer! = nil
+    private var firer: PendingTaskManager! = nil
     
     private let waitGroup = DispatchGroup()
     
@@ -225,13 +225,14 @@ public class SimpleNIORunner: Runner {
             self.eventLoopGroup = group
         }
         
-        let firerLoop = MultiThreadedEventLoopGroup(numberOfThreads: 1).next()
-        self.firer = Firer(on: firerLoop, runner: self)
-        let schedulerLoop = MultiThreadedEventLoopGroup(numberOfThreads: 1).next()
-        let scheduler = Scheduler(on: schedulerLoop, runner: self, controlling: self.eventLoopGroup)
+        let runnerLoop = MultiThreadedEventLoopGroup(numberOfThreads: 1).next()
+//        let firerLoop = MultiThreadedEventLoopGroup(numberOfThreads: 1).next()
+        self.firer = PendingTaskManager(on: runnerLoop, runner: self)
+//        let schedulerLoop = MultiThreadedEventLoopGroup(numberOfThreads: 1).next()
+        let scheduler = RunningTaskManager(on: runnerLoop, runner: self, controlling: self.eventLoopGroup)
         
-        self.firer.scheduler = scheduler
-        scheduler.firer = firer
+        self.firer.runningManager = scheduler
+        scheduler.pendingManager = firer
         
         self.waitGroup.enter()
         
@@ -246,7 +247,7 @@ public class SimpleNIORunner: Runner {
     }
     
     public func resume() {
-        self.firer.resume()
+        self.firer.resumePendingManager()
     }
     
     public func waitUntilQueueIsEmpty() {
