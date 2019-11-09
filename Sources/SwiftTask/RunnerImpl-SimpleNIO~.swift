@@ -1,4 +1,3 @@
-
 import NIO // using MultiThreadedEventLoopGroup
 import Dispatch // using DispatchGroup and DispatchSemaphore
 import NIOConcurrencyHelpers // using Lock
@@ -7,24 +6,24 @@ public enum EventLoopGroupProvider {
     case shared(EventLoopGroup)
 }
 
-public class SimpleNIORunner: Runner {  
-    
+public class SimpleNIORunner: Runner {
+
     class TaskManager {
-        
+
         private let localLoop: EventLoop
         private let runner: SimpleNIORunner
         private let group: EventLoopGroup
-        
+
         fileprivate init(on eventLoop: EventLoop, runner: SimpleNIORunner, controlling group: EventLoopGroup) {
             self.localLoop = eventLoop
             self.runner = runner
             self.group = group
         }
-        
-        
+
+        //
         // Pending Task Manager
-        
-        
+        //
+
         private enum PendingManagerStatus {
             case paused
             case waitingBecausePendingQueueIsEmpty
@@ -32,18 +31,18 @@ public class SimpleNIORunner: Runner {
             case running
         }
         private var pendingManagerStatus = PendingManagerStatus.paused
-        
+
         private typealias PendingTaskItem = (task: GeneralizedTask, metadata: Packable?)
         private var pendingTaskQueue = SimpleInMemoryQueue(for: PendingTaskItem.self)
-        
+
         private var runningTaskCount = 0
-        
+
         private func local_processPending() {
-            
+
             if self.pendingManagerStatus == .paused {
                 return
             }
-            
+
             /// TODO: customizable -ize
             if self.runningTaskCount > System.coreCount {
                 self.pendingManagerStatus = .waitingBecauseTooManyRunningTasks
@@ -58,26 +57,26 @@ public class SimpleNIORunner: Runner {
                 }
                 return
             }
-            
+
             self.runningTaskCount += 1
             self.local_executeTask(item.task, item.metadata)
-            
+
             self.localLoop.execute(self.local_processPending)
             self.pendingManagerStatus = .running
-            
+
         }
-        
+
         private func local_resumePendingManager() {
             if self.pendingManagerStatus != .running {
                 self.localLoop.execute(self.local_processPending)
                 self.pendingManagerStatus = .running
             }
         }
-        
+
         fileprivate func resumePendingManager() {
             self.localLoop.execute(self.local_resumePendingManager)
         }
-        
+
         private func local_reportTaskDone() {
             self.runningTaskCount -= 1
             if self.pendingManagerStatus == .waitingBecauseTooManyRunningTasks {
@@ -89,8 +88,8 @@ public class SimpleNIORunner: Runner {
                 self.local_resumePendingManager()
             }
         }
-        
-        fileprivate func addTask<In, Out>(_ task: Task<In, Out>, metadata: Packable?, options: [String : Any]?) {
+
+        fileprivate func addTask<In, Out>(_ task: Task<In, Out>, metadata: Packable?, options: [String: Any]?) {
             self.localLoop.execute {
                 self.pendingTaskQueue.enqueue(
                     PendingTaskItem(GeneralizedTask(from: task), metadata)
@@ -100,20 +99,20 @@ public class SimpleNIORunner: Runner {
                 }
             }
         }
-        
-        
+
+        //
         // Running Task Manager
-        
-        
+        //
+
         private enum RunningManagerStatus {
             case waitingBecauseRunningQueueIsEmpty
             case running
         }
         private var runningManagerStatus = RunningManagerStatus.waitingBecauseRunningQueueIsEmpty
-        
+
         typealias RunningTaskItem = (task: GeneralizedTask, position: Int, input: Any, metadata: Packable?)
         private var runningTaskQueue = SimpleInMemoryQueue(for: RunningTaskItem.self)
-        
+
         /// TODO: customizable -ize
         private lazy var threadPoolForBlockingIO = buildThreadPool()
         private func buildThreadPool() -> NIOThreadPool {
@@ -121,14 +120,14 @@ public class SimpleNIORunner: Runner {
             pool.start()
             return pool
         }
-        
+
         private func local_processRunning() {
-            
+
             guard let item = self.runningTaskQueue.dequeue() else {
                 self.runningManagerStatus = .waitingBecauseRunningQueueIsEmpty
                 return
             }
-            
+
             func onComplete(_ result: Result<Any, Error>) {
                 self.localLoop.execute {
                     switch result {
@@ -149,46 +148,46 @@ public class SimpleNIORunner: Runner {
                     }
                 }
             }
-            
+
             let filter = item.task.pipeline.filters[item.position].filter
             switch filter {
-            case .computing(let fn):
+            case .computing(let filter):
                 self.group.next().submit {
-                    try fn(item.input)
+                    try filter(item.input)
                     }.whenComplete(onComplete)
-            case .jointComputing(let fns):
+            case .jointComputing(let filters):
                 self.group.next().submit {
                     var out = item.input
-                    for fn in fns {
-                        out = try fn(out)
+                    for filter in filters {
+                        out = try filter(out)
                     }
                     return out
                     }.whenComplete(onComplete)
-            case .blocking(let fn):
+            case .blocking(let filter):
                 self.threadPoolForBlockingIO.runIfActive(eventLoop: self.group.next()) {
-                    try fn(item.input)
+                    try filter(item.input)
                     }.whenComplete(onComplete)
-            case .nio(let fnfn):
+            case .nio(let wrappedFilter):
                 let nextLoop = self.group.next()
-                let fn = fnfn(nextLoop)
-                nextLoop.flatSubmit{
+                let filter = wrappedFilter(nextLoop)
+                nextLoop.flatSubmit {
                     do {
-                        return try fn(item.input)
+                        return try filter(item.input)
                     } catch {
                         return nextLoop.makeFailedFuture(error) as EventLoopFuture<Any>
                     }
                     }.whenComplete(onComplete)
             }
-            
+
             self.localLoop.execute(self.local_processRunning)
             self.runningManagerStatus = .running
-            
+
         }
-        
+
         private func local_onTaskDone() {
             self.local_reportTaskDone()
         }
-        
+
         private func local_enqueueTask(_ task: GeneralizedTask, _ position: Int, _ input: Any, _ metadata: Packable?) {
             self.runningTaskQueue.enqueue(
                 RunningTaskItem(task, position, input, metadata))
@@ -197,54 +196,56 @@ public class SimpleNIORunner: Runner {
                 self.runningManagerStatus = .running
             }
         }
-        
+
         fileprivate func local_executeTask(_ task: GeneralizedTask, _ metadata: Packable?) {
             self.local_enqueueTask(task, 0, task.input, metadata)
         }
-        
-    }
-    
 
+    }
+
+    //
+    // Runner
+    //
+    // swiftlint:disable trailing_whitespace
     
-    public var resultHandler: ((GeneralizedTask, Packable?, Any) -> ())? = nil
-    public var errorHandler: ((GeneralizedTask, Packable?, Error) -> ())? = nil
-    
+    public var resultHandler: ((GeneralizedTask, Packable?, Any) -> Void)?
+    public var errorHandler: ((GeneralizedTask, Packable?, Error) -> Void)?
+
     private let eventLoopGroup: EventLoopGroup
-    
+
     private var manager: TaskManager! = nil
-    
+
     private let waitGroup = DispatchGroup()
-    
+
     public init(eventLoopGroupProvider: EventLoopGroupProvider) {
-        
+
         switch eventLoopGroupProvider {
         case .shared(let group):
             self.eventLoopGroup = group
         }
-        
+
         let runnerLoop = MultiThreadedEventLoopGroup(numberOfThreads: 1).next()
 //        let schedulerLoop = MultiThreadedEventLoopGroup(numberOfThreads: 1).next()
         self.manager = TaskManager(on: runnerLoop, runner: self, controlling: self.eventLoopGroup)
-        
+
         self.waitGroup.enter()
-        
+
     }
-    
-    public func addTask<In, Out>(_ task: Task<In, Out>, metadata: Packable? = nil, options: [String : Any]? = nil) {
+
+    public func addTask<In, Out>(_ task: Task<In, Out>, metadata: Packable? = nil, options: [String: Any]? = nil) {
         self.manager.addTask(task, metadata: metadata, options: options)
     }
-    
+
     fileprivate func reportNoTasksRemain() {
         self.waitGroup.leave()
     }
-    
+
     public func resume() {
         self.manager.resumePendingManager()
     }
-    
+
     public func waitUntilQueueIsEmpty() {
         self.waitGroup.wait()
     }
-    
-}
 
+}

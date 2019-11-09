@@ -1,4 +1,3 @@
-
 public protocol Packable {
     func packed() -> [UInt8]
     init(fromPackedData: [UInt8])
