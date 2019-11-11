@@ -71,7 +71,7 @@ public class SingleThreadRunner: Runner {
         }
     }
 
-    public func addTask<In, Out>(_ task: Task<In, Out>, metadata: Packable? = nil, options: [String: Any]? = nil) {
+    public func addTask<T: Task>(_ task: T, metadata: Packable? = nil, options: [String: Any]? = nil) {
         let item: QueueItem = QueueItem(GeneralizedTask(from: task), metadata)
         self.queue.enqueue(item)
     }

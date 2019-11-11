@@ -44,7 +44,7 @@ final class SwiftTaskTests: XCTestCase {
 
         func step(_ current: Int) {
             if current < total {
-                runner.addTask(Task(pipeline: pipeline, input: current), metadata: [], options: nil)
+                runner.addTask(PureTask(pipeline: pipeline, input: current), metadata: [], options: nil)
             } else {
                 XCTAssertEqual(current, total)
                 //                XCTAssertTrue(false)
@@ -73,7 +73,7 @@ final class SwiftTaskTests: XCTestCase {
 
         let pipeline = createSynchronouslyTestingPipeline(TOTAL, runner: runner)
 
-        runner.addTask(Task(pipeline: pipeline, input: 0))
+        runner.addTask(PureTask(pipeline: pipeline, input: 0))
 
         runner.resume()
         runner.waitUntilQueueIsEmpty()
@@ -87,7 +87,7 @@ final class SwiftTaskTests: XCTestCase {
 
         let pipeline = createSynchronouslyTestingPipeline(TOTAL, runner: runner)
 
-        runner.addTask(Task(pipeline: pipeline, input: 0))
+        runner.addTask(PureTask(pipeline: pipeline, input: 0))
         print("first task added")
         runner.resume()
         print("runner resumed")
@@ -156,14 +156,14 @@ final class SwiftTaskTests: XCTestCase {
                 visitedLock.withWLockVoid {
                     visited.insert(realURL)
                 }
-                runner.addTask(Task(pipeline: pipeline, input: try HTTPClient.Request(url: realURL)))
+                runner.addTask(PureTask(pipeline: pipeline, input: try HTTPClient.Request(url: realURL)))
                 }}
 
         runner.errorHandler = { task, metadata, err in
             print("error: \(task): \(err)")
         }
 
-        runner.addTask(Task(pipeline: pipeline, input: try! HTTPClient.Request(url: startURL)))
+        runner.addTask(PureTask(pipeline: pipeline, input: try! HTTPClient.Request(url: startURL)))
 
         runner.resume()
         runner.waitUntilQueueIsEmpty()

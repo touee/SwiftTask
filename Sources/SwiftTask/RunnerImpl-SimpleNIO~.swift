@@ -89,7 +89,7 @@ public class SimpleNIORunner: Runner {
             }
         }
 
-        fileprivate func addTask<In, Out>(_ task: Task<In, Out>, metadata: Packable?, options: [String: Any]?) {
+        fileprivate func addTask<T: Task>(_ task: T, metadata: Packable?, options: [String: Any]?) {
             self.localLoop.execute {
                 self.pendingTaskQueue.enqueue(
                     PendingTaskItem(GeneralizedTask(from: task), metadata)
@@ -207,7 +207,7 @@ public class SimpleNIORunner: Runner {
     // Runner
     //
     // swiftlint:disable trailing_whitespace
-    
+
     public var resultHandler: ((GeneralizedTask, Packable?, Any) -> Void)?
     public var errorHandler: ((GeneralizedTask, Packable?, Error) -> Void)?
 
@@ -232,7 +232,7 @@ public class SimpleNIORunner: Runner {
 
     }
 
-    public func addTask<In, Out>(_ task: Task<In, Out>, metadata: Packable? = nil, options: [String: Any]? = nil) {
+    public func addTask<T: Task>(_ task: T, metadata: Packable? = nil, options: [String: Any]? = nil) {
         self.manager.addTask(task, metadata: metadata, options: options)
     }
 

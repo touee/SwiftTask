@@ -1,4 +1,12 @@
-public struct Task<In, Out> {
+public protocol Task {
+    associatedtype In
+    associatedtype Out
+
+    var pipeline: Pipeline<In, Out> { get }
+    var input: In { get }
+}
+
+public struct PureTask<In, Out>: Task {
     public let pipeline: Pipeline<In, Out>
     public let input: In
 
@@ -19,7 +27,7 @@ public struct GeneralizedTask {
 //        return pipeline.outputType
 //    }
 
-    public init<In, Out>(from task: Task<In, Out>) {
+    public init<T: Task>(from task: T) {
         self.pipeline = GeneralizedPipeline(from: task.pipeline)
         self.input = task.input
     }

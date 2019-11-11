@@ -1,6 +1,6 @@
 protocol Runner {
 
-    func addTask<In, Out>(_ task: Task<In, Out>, metadata: Packable?, options: [String: Any]?)
+    func addTask<T: Task>(_ task: T, metadata: Packable?, options: [String: Any]?)
 
     func resume()
     func waitUntilQueueIsEmpty()
