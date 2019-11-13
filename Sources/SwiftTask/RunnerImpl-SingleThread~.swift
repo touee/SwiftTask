@@ -40,11 +40,9 @@ public class SingleThreadRunner: Runner {
         var out = item.task.input
         for record in item.task.pipeline.filters {
             do {
-                switch record.filter {
-                case .computing(let filter):
-                    out = try filter(out)
-                case .blocking(let filter):
-                    out = try filter(out)
+                switch record.filterType {
+                case .computing, .blocking:
+                    out = try record.filter.execute(input: out)
                 default: throw BadRunnerEnvironmentError()
                 }
             } catch is PipelineShouldBreakError {

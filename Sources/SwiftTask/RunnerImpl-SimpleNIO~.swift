@@ -151,34 +151,33 @@ public class SimpleNIORunner: Runner {
                 }
             }
 
-            let filter = item.task.pipeline.filters[item.position].filter
-            switch filter {
-            case .computing(let filter):
+            let records = item.task.pipeline.filters
+            var record = records[item.position]
+            switch record.filterType {
+            case .computing:
                 self.group.next().submit {
-                    var out = try filter(item.input)
-                    let filters = item.task.pipeline.filters
-                    while item.position + deltaPosition < filters.count {
-                        if !filters[item.position+deltaPosition].isJoint {
+                    var out = try record.filter.execute(input: item.input)
+                    while item.position + deltaPosition < records.count {
+                        record = records[item.position+deltaPosition]
+                        if !record.isJoint {
+                            break
+                        } else if record.filterType != .computing {
                             break
                         }
-                        guard case .computing(let filter) = filters[item.position+deltaPosition].filter else {
-                            break
-                        }
-                        out = try filter(out)
+                        out = try record.filter.execute(input: out)
                         deltaPosition += 1
                     }
                     return out
                     }.whenComplete(onComplete)
-            case .blocking(let filter):
+            case .blocking:
                 self.threadPoolForBlockingIO.runIfActive(eventLoop: self.group.next()) {
-                    try filter(item.input)
+                    try record.filter.execute(input: item.input)
                     }.whenComplete(onComplete)
-            case .nio(let wrappedFilter):
+            case .nio:
                 let nextLoop = self.group.next()
-                let filter = wrappedFilter(nextLoop)
                 nextLoop.flatSubmit {
                     do {
-                        return try filter(item.input)
+                        return try record.filter.executePromising(input: item.input, eventLoop: nextLoop)
                     } catch {
                         return nextLoop.makeFailedFuture(error) as EventLoopFuture<Any>
                     }

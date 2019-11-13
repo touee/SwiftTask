@@ -3,8 +3,6 @@ import NIO
 /// A filter is just a function.
 public typealias Filter<In, Out> = (In) throws -> Out
 public typealias PromisingFilter<In, Out> = (EventLoop) -> (In) throws -> EventLoopFuture<Out>
-public typealias GeneralizedFilter = (Any) throws -> Any
-public typealias GeneralizedPromisingFilter = (EventLoop) -> (Any) throws -> EventLoopFuture<Any>
 
 public struct Blocking<In, Out> {
     public let filter: Filter<In, Out>
@@ -16,28 +14,58 @@ public struct Promising<In, Out> {
     public init(_ wrappedFilter: @escaping PromisingFilter<In, Out>) { self.wrappedFilter = wrappedFilter }
 }
 
+public struct GeneralizedFilter {
+    private let filter: Any
+    private let isPromising: Bool
+    
+    public init<In, Out>(filter: @escaping Filter<In, Out>) {
+        self.filter = { (input: Any) -> Any in try filter(input as! In) }
+        self.isPromising = false
+    }
+    public init<In, Out>(filter: Blocking<In, Out>) {
+        self.init(filter: filter.filter)
+    }
+    public init<In, Out>(filter: Promising<In, Out>) {
+        self.filter = { (evl: EventLoop) in { (input: Any) -> Any in
+            try (filter.wrappedFilter(evl)(input as! In)).map { $0 as Any } } }
+        self.isPromising = true
+    }
+    
+    public func execute(input: Any, eventLoop: EventLoop? = nil) throws -> Any {
+        var filter = self.filter
+        if isPromising {
+            filter = (filter as! ((EventLoop) -> (Any) throws -> EventLoopFuture<Any>))(eventLoop!)
+        }
+        return try (filter as! ((Any) throws -> Any))(input)
+    }
+    public func executePromising(input: Any, eventLoop: EventLoop) throws -> EventLoopFuture<Any> {
+        return try self.execute(input: input, eventLoop: eventLoop) as! EventLoopFuture<Any>
+    }
+}
+
 /// Record of a filter stored by Pipeline.
 public struct FilterRecord {
 
-    public enum Filter {
+    public enum FilterType {
         /// filter uses cpu effectively (default).
         /// filter signature: @escaping (T) -> throws U
         /// e.g.: parsing json
-        case computing(GeneralizedFilter)
+        case computing
 
         /// filter performs blocking I/O operation.
         /// e.g.: write/read files
         /// filter signature: Blocking<@escaping (T) -> throws U>
-        case blocking(GeneralizedFilter)
+        case blocking
 
         /// filter performs NIO operation, and returns a future.
         /// e.g.: using https://github.com/swift-server/async-http-client
         /// filter signature: @escaping (EventLoop) -> ((T) -> throws EventLoopFuture<U>)
-        case nio(GeneralizedPromisingFilter)
+        case nio
     }
 
     /// filter itself
-    let filter: FilterRecord.Filter
+    let filterType: FilterType
+    let filter: GeneralizedFilter
 //    /// filter's return type
 //    let outputType: Any.Type
     let isJoint: Bool
@@ -53,26 +81,22 @@ public final class Pipeline<In, Out> {
         self.filters = []
     }
 
-    private init<X>(from pipeline: Pipeline<In, X>, with filter: FilterRecord.Filter, isJoint: Bool = false) {
-        self.filters = pipeline.filters + [FilterRecord(filter: filter/*, outputType: Out.self*/, isJoint: isJoint)]
+    private init<X>(from pipeline: Pipeline<In, X>, with filterRecord: FilterRecord, isJoint: Bool = false) {
+        self.filters = pipeline.filters + [filterRecord]
     }
     
     /// New pipeline with a computing filter appended
     private convenience init<X>(from pipeline: Pipeline<In, X>, with newFilter: @escaping Filter<X, Out>,
                                 isJoint: Bool) {
-        let wrapper: GeneralizedFilter = { try newFilter($0 as! X) }
-        self.init(from: pipeline, with: .computing(wrapper), isJoint: isJoint)
+        self.init(from: pipeline, with: FilterRecord(filterType: .computing, filter: GeneralizedFilter(filter: newFilter), isJoint: isJoint))
     }
     /// New pipeline with a blocking filter appended
     fileprivate convenience init<X>(from pipeline: Pipeline<In, X>, with newFilter: Blocking<X, Out>) {
-        let wrapper: GeneralizedFilter = { try newFilter.filter($0 as! X) }
-        self.init(from: pipeline, with: .blocking(wrapper))
+        self.init(from: pipeline, with: FilterRecord(filterType: .blocking, filter: GeneralizedFilter(filter: newFilter), isJoint: false))
     }
     ///  New pipeline with an NIO filter appended
     private convenience init<X>(from pipeline: Pipeline<In, X>, with newFilter: Promising<X, Out>) {
-        let wrapper: GeneralizedPromisingFilter = { (evl: EventLoop) in {
-            try (newFilter.wrappedFilter(evl)($0 as! X)).map { $0 as Any } } }
-        self.init(from: pipeline, with: .nio(wrapper))
+        self.init(from: pipeline, with: FilterRecord(filterType: .nio, filter: GeneralizedFilter(filter: newFilter), isJoint: false))
     }
 
     fileprivate init<X>(_ left: Pipeline<In, X>, _ right: Pipeline<X, Out>) {
@@ -86,11 +110,9 @@ public final class Pipeline<In, Out> {
             filters = self.filters[range]
         }
         for record in filters {
-            switch record.filter {
-            case .computing(let filter):
-                out = try filter(out)
-            case .blocking(let filter):
-                out = try filter(out)
+            switch record.filterType {
+            case .computing, .blocking:
+                out = try record.filter.execute(input: out)
             case .nio:
                 throw BadRunnerEnvironmentError()
             }
