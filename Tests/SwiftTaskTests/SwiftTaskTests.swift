@@ -6,7 +6,6 @@ import NIOConcurrencyHelpers
 import Foundation
 
 import AsyncHTTPClient
-import SwiftSoup
 
 extension String: Error {}
 
@@ -146,18 +145,23 @@ final class SwiftTaskTests: XCTestCase {
 
         var pipeline: Pipeline<HTTPClient.Request, ()>! = nil
         pipeline = syncRequestToBodyPipeline
-            |+ { (body, requestURL) in (try SwiftSoup.parse(body), requestURL) }
-            |+ { (doc, requestURL) in try doc.select("a[href]").array().forEach {
-                let realURL = URL(string: try $0.attr("href"), relativeTo: requestURL)!.absoluteString
-
-                if visitedLock.withRLock({
-                    visited.contains(realURL)
-                }) { return }
-                visitedLock.withWLockVoid {
-                    visited.insert(realURL)
+            |+ { (body, requestURL) in
+                var lastEnd = body.startIndex
+                while true {
+                    guard let range = body.range(of: #"href="(.*?)""#,
+                                                 options: .regularExpression,
+                                                 range: lastEnd..<body.endIndex) else {
+                        break
+                    }
+                    lastEnd = range.upperBound
+                    let url = String(
+                        String(body)[
+                            body.index(range.lowerBound, offsetBy: 6)
+                            ..< body.index(range.upperBound, offsetBy: -1)])
+                    let absoluteURL = URL(string: url, relativeTo: requestURL)!.absoluteString
+                    runner.addTask(PureTask(pipeline: pipeline, input: try HTTPClient.Request(url: absoluteURL)))
                 }
-                runner.addTask(PureTask(pipeline: pipeline, input: try HTTPClient.Request(url: realURL)))
-                }}
+            }
 
         runner.errorHandler = { task, metadata, err in
             print("error: \(task): \(err)")
