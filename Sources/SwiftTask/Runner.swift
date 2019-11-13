@@ -1,4 +1,4 @@
-protocol Runner {
+public protocol Runner {
 
     func addTask<T: Task>(_ task: T, metadata: Packable?, options: [String: Any]?)
 
