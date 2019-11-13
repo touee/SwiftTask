@@ -127,16 +127,18 @@ public class SimpleNIORunner: Runner {
                 self.runningManagerStatus = .waitingBecauseRunningQueueIsEmpty
                 return
             }
+            
+            var deltaPosition = 1
 
             func onComplete(_ result: Result<Any, Error>) {
                 self.localLoop.execute {
                     switch result {
                     case .success(let out):
-                        if item.position == item.task.pipeline.filters.count - 1 {
+                        if item.position + deltaPosition == item.task.pipeline.filters.count {
                             self.runner.resultHandler?(item.task, item.metadata, out)
                             self.local_onTaskDone()
                         } else {
-                            self.local_enqueueTask(item.task, item.position+1, out, item.metadata)
+                            self.local_enqueueTask(item.task, item.position+deltaPosition, out, item.metadata)
                         }
                     case .failure(let error):
                         if error is PipelineShouldBreakError {
@@ -153,13 +155,17 @@ public class SimpleNIORunner: Runner {
             switch filter {
             case .computing(let filter):
                 self.group.next().submit {
-                    try filter(item.input)
-                    }.whenComplete(onComplete)
-            case .jointComputing(let filters):
-                self.group.next().submit {
-                    var out = item.input
-                    for filter in filters {
+                    var out = try filter(item.input)
+                    let filters = item.task.pipeline.filters
+                    while item.position + deltaPosition < filters.count {
+                        if !filters[item.position+deltaPosition].isJoint {
+                            break
+                        }
+                        guard case .computing(let filter) = filters[item.position+deltaPosition].filter else {
+                            break
+                        }
                         out = try filter(out)
+                        deltaPosition += 1
                     }
                     return out
                     }.whenComplete(onComplete)

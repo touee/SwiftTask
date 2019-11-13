@@ -43,10 +43,6 @@ public class SingleThreadRunner: Runner {
                 switch record.filter {
                 case .computing(let filter):
                     out = try filter(out)
-                case .jointComputing(let filters):
-                    for filter in filters {
-                        out = try filter(out)
-                    }
                 case .blocking(let filter):
                     out = try filter(out)
                 default: throw BadRunnerEnvironmentError()
