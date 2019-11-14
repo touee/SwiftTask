@@ -2,10 +2,10 @@ import Dispatch
 
 public class SingleThreadRunner: Runner {
 
-    public var resultHandler: ((GeneralizedTask, Packable?, Any) -> Void)?
-    public var errorHandler: ((GeneralizedTask, Packable?, Error) -> Void)?
+    public var resultHandler: ((GeneralizedTask, StringKeyedSafeDictionary?, Any) -> Void)?
+    public var errorHandler: ((GeneralizedTask, StringKeyedSafeDictionary?, Error) -> Void)?
 
-    typealias QueueItem = (task: GeneralizedTask, metadata: Packable?)
+    typealias QueueItem = (task: GeneralizedTask, ownedData: StringKeyedSafeDictionary?)
     private var queue = SimpleInMemoryQueue(for: QueueItem.self)
 
     private var shouldPause = false
@@ -42,17 +42,19 @@ public class SingleThreadRunner: Runner {
             do {
                 switch record.filterType {
                 case .computing, .blocking:
-                    out = try record.filter.execute(input: out)
+                    out = try record.filter.execute(input: out,
+                                                    sharedData: self.sharedData,
+                                                    ownedData: item.ownedData)
                 default: throw BadRunnerEnvironmentError()
                 }
             } catch is PipelineShouldBreakError {
                 return
             } catch {
-                self.errorHandler?(item.task, item.metadata, error)
+                self.errorHandler?(item.task, item.ownedData, error)
                 return
             }
         }
-        self.resultHandler?(item.task, item.metadata, out)
+        self.resultHandler?(item.task, item.ownedData, out)
     }
 
     public func resume() {
@@ -65,13 +67,24 @@ public class SingleThreadRunner: Runner {
         }
     }
 
-    public func addTask<T: Task>(_ task: T, metadata: Packable? = nil, options: [String: Any]? = nil) {
-        let item: QueueItem = QueueItem(GeneralizedTask(from: task), metadata)
+    public func addTask<T: Task>(_ task: T, metadata: [String : Any]? = nil, options: [String: Any]? = nil) {
+        var item: QueueItem!
+        if task.pipeline.filters.contains(where: { $0.filter.withExtraData }) {
+            let sharedDict = SimpleSafeDictionary()
+            item = QueueItem(GeneralizedTask(from: task), sharedDict)
+            if let metadata = metadata {
+                sharedDict["metadata"] = metadata
+            }
+        } else {
+            item = QueueItem(GeneralizedTask(from: task), nil)
+        }
         self.queue.enqueue(item)
     }
 
     public func waitUntilQueueIsEmpty() {
         self.group.wait()
     }
+    
+    public var sharedData: StringKeyedSafeDictionary = SimpleSafeDictionary()
 
 }

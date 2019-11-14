@@ -32,7 +32,7 @@ public class SimpleNIORunner: Runner {
         }
         private var pendingManagerStatus = PendingManagerStatus.paused
 
-        private typealias PendingTaskItem = (task: GeneralizedTask, metadata: Packable?)
+        private typealias PendingTaskItem = (task: GeneralizedTask, ownedData: StringKeyedSafeDictionary?)
         private var pendingTaskQueue = SimpleInMemoryQueue(for: PendingTaskItem.self)
 
         private var runningTaskCount = 0
@@ -59,7 +59,7 @@ public class SimpleNIORunner: Runner {
             }
 
             self.runningTaskCount += 1
-            self.local_executeTask(item.task, item.metadata)
+            self.local_executeTask(item.task, item.ownedData)
 
             self.localLoop.execute(self.local_processPending)
             self.pendingManagerStatus = .running
@@ -89,11 +89,20 @@ public class SimpleNIORunner: Runner {
             }
         }
 
-        fileprivate func addTask<T: Task>(_ task: T, metadata: Packable?, options: [String: Any]?) {
+        fileprivate func addTask<T: Task>(_ task: T, metadata: [String: Any]?, options: [String: Any]?) {
             self.localLoop.execute {
-                self.pendingTaskQueue.enqueue(
-                    PendingTaskItem(GeneralizedTask(from: task), metadata)
-                )
+                var item: PendingTaskItem!
+                if task.pipeline.filters.contains(where: { $0.filter.withExtraData }) {
+                    let sharedDict = SimpleSafeDictionary()
+                    item = PendingTaskItem(GeneralizedTask(from: task), sharedDict)
+                    if let metadata = metadata {
+                        sharedDict["metadata"] = metadata
+                    }
+                } else {
+                    item = PendingTaskItem(GeneralizedTask(from: task), nil)
+                }
+                self.pendingTaskQueue.enqueue(item)
+                
                 if self.pendingManagerStatus == .waitingBecausePendingQueueIsEmpty {
                     self.local_resumePendingManager()
                 }
@@ -110,7 +119,7 @@ public class SimpleNIORunner: Runner {
         }
         private var runningManagerStatus = RunningManagerStatus.waitingBecauseRunningQueueIsEmpty
 
-        typealias RunningTaskItem = (task: GeneralizedTask, position: Int, input: Any, metadata: Packable?)
+        typealias RunningTaskItem = (task: GeneralizedTask, position: Int, input: Any, ownedData: StringKeyedSafeDictionary?)
         private var runningTaskQueue = SimpleInMemoryQueue(for: RunningTaskItem.self)
 
         /// TODO: customizable -ize
@@ -135,16 +144,16 @@ public class SimpleNIORunner: Runner {
                     switch result {
                     case .success(let out):
                         if item.position + deltaPosition == item.task.pipeline.filters.count {
-                            self.runner.resultHandler?(item.task, item.metadata, out)
+                            self.runner.resultHandler?(item.task, item.ownedData, out)
                             self.local_onTaskDone()
                         } else {
-                            self.local_enqueueTask(item.task, item.position+deltaPosition, out, item.metadata)
+                            self.local_enqueueTask(item.task, item.position+deltaPosition, out, item.ownedData)
                         }
                     case .failure(let error):
                         if error is PipelineShouldBreakError {
                             // Nop
                         } else {
-                            self.runner.errorHandler?(item.task, item.metadata, error)
+                            self.runner.errorHandler?(item.task, item.ownedData, error)
                         }
                         self.local_onTaskDone()
                     }
@@ -156,7 +165,9 @@ public class SimpleNIORunner: Runner {
             switch record.filterType {
             case .computing:
                 self.group.next().submit {
-                    var out = try record.filter.execute(input: item.input)
+                    var out = try record.filter.execute(input: item.input,
+                                                        sharedData: self.runner.sharedData,
+                                                        ownedData: item.ownedData)
                     while item.position + deltaPosition < records.count {
                         record = records[item.position+deltaPosition]
                         if !record.isJoint {
@@ -164,20 +175,24 @@ public class SimpleNIORunner: Runner {
                         } else if record.filterType != .computing {
                             break
                         }
-                        out = try record.filter.execute(input: out)
+                        out = try record.filter.execute(input: out,
+                                                        sharedData: self.runner.sharedData,
+                                                        ownedData: item.ownedData)
                         deltaPosition += 1
                     }
                     return out
                     }.whenComplete(onComplete)
             case .blocking:
                 self.threadPoolForBlockingIO.runIfActive(eventLoop: self.group.next()) {
-                    try record.filter.execute(input: item.input)
+                    try record.filter.execute(input: item.input,
+                                              sharedData: self.runner.sharedData,
+                                              ownedData: item.ownedData)
                     }.whenComplete(onComplete)
             case .nio:
                 let nextLoop = self.group.next()
                 nextLoop.flatSubmit {
                     do {
-                        return try record.filter.executePromising(input: item.input, eventLoop: nextLoop)
+                        return try record.filter.executePromising(input: item.input, eventLoop: nextLoop, sharedData: self.runner.sharedData, ownedData: item.ownedData)
                     } catch {
                         return nextLoop.makeFailedFuture(error) as EventLoopFuture<Any>
                     }
@@ -193,17 +208,17 @@ public class SimpleNIORunner: Runner {
             self.local_reportTaskDone()
         }
 
-        private func local_enqueueTask(_ task: GeneralizedTask, _ position: Int, _ input: Any, _ metadata: Packable?) {
+        private func local_enqueueTask(_ task: GeneralizedTask, _ position: Int, _ input: Any, _ ownedData: StringKeyedSafeDictionary?) {
             self.runningTaskQueue.enqueue(
-                RunningTaskItem(task, position, input, metadata))
+                RunningTaskItem(task, position, input, ownedData))
             if self.runningManagerStatus == .waitingBecauseRunningQueueIsEmpty {
                 self.localLoop.execute(self.local_processRunning)
                 self.runningManagerStatus = .running
             }
         }
 
-        fileprivate func local_executeTask(_ task: GeneralizedTask, _ metadata: Packable?) {
-            self.local_enqueueTask(task, 0, task.input, metadata)
+        fileprivate func local_executeTask(_ task: GeneralizedTask, _ ownedData: StringKeyedSafeDictionary?) {
+            self.local_enqueueTask(task, 0, task.input, ownedData)
         }
 
     }
@@ -213,8 +228,8 @@ public class SimpleNIORunner: Runner {
     //
     // swiftlint:disable trailing_whitespace
 
-    public var resultHandler: ((GeneralizedTask, Packable?, Any) -> Void)?
-    public var errorHandler: ((GeneralizedTask, Packable?, Error) -> Void)?
+    public var resultHandler: ((GeneralizedTask, StringKeyedSafeDictionary?, Any) -> Void)?
+    public var errorHandler: ((GeneralizedTask, StringKeyedSafeDictionary?, Error) -> Void)?
 
     private let eventLoopGroup: EventLoopGroup
 
@@ -237,7 +252,7 @@ public class SimpleNIORunner: Runner {
 
     }
 
-    public func addTask<T: Task>(_ task: T, metadata: Packable? = nil, options: [String: Any]? = nil) {
+    public func addTask<T: Task>(_ task: T, metadata: [String: Any]? = nil, options: [String: Any]? = nil) {
         self.manager.addTask(task, metadata: metadata, options: options)
     }
 
@@ -252,5 +267,7 @@ public class SimpleNIORunner: Runner {
     public func waitUntilQueueIsEmpty() {
         self.waitGroup.wait()
     }
+    
+    public var sharedData: StringKeyedSafeDictionary = SimpleSafeDictionary()
 
 }

@@ -43,7 +43,7 @@ final class SwiftTaskTests: XCTestCase {
 
         func step(_ current: Int) {
             if current < total {
-                runner.addTask(PureTask(pipeline: pipeline, input: current), metadata: [], options: nil)
+                runner.addTask(PureTask(pipeline: pipeline, input: current), metadata: nil, options: nil)
             } else {
                 XCTAssertEqual(current, total)
                 //                XCTAssertTrue(false)
@@ -95,20 +95,30 @@ final class SwiftTaskTests: XCTestCase {
 
     }
 
-    func crawl(startURL: URL, allowedDomain: String) {
+    enum CrawlTestCondition {
+        case syncURLConnection
+        case asyncHTTPClientInScope
+        case asyncHTTPClientInSharedDict
+    }
+    func crawl(startURL: URL, allowedDomain: String, condition: CrawlTestCondition) {
         let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount * 2)
 
         let runner = SimpleNIORunner(eventLoopGroupProvider: .shared(eventLoopGroup))
 
-        var clientConfiguration = HTTPClient.Configuration()
-        clientConfiguration.timeout.connect = .seconds(10)
-        clientConfiguration.timeout.read = .seconds(10)
-        let client = HTTPClient(
-            eventLoopGroupProvider: .shared(eventLoopGroup),
-            configuration: clientConfiguration)
-        defer {
-            // swiftlint:disable force_try
-            try! client.syncShutdown()
+        var asyncHTTPClient: HTTPClient?
+        if [CrawlTestCondition.asyncHTTPClientInScope, CrawlTestCondition.asyncHTTPClientInSharedDict].contains(condition) {
+            var clientConfiguration = HTTPClient.Configuration()
+            clientConfiguration.timeout.connect = .seconds(10)
+            clientConfiguration.timeout.read = .seconds(10)
+            let client = HTTPClient(
+                eventLoopGroupProvider: .shared(eventLoopGroup),
+                configuration: clientConfiguration)
+            
+            if condition == .asyncHTTPClientInScope {
+                asyncHTTPClient = client
+            } else {
+                runner.sharedData["client"] = client
+            }
         }
 
         var visited = Set<String>()
@@ -128,23 +138,43 @@ final class SwiftTaskTests: XCTestCase {
             return buf.readString(length: buf.readableBytes)!
         }
 
-//        let requestToBodyPipeline = buildPipeline(forInputType: HTTPClient.Request.self)
-//            | ensureAllowedURL
-//            //| { req in print("visiting: \(req.url.absoluteString)"); return req }
-//            | Promising { el in { req in
-//                client.execute(request: req, eventLoop: .delegate(on: el)).map{ (req, $0) } } }
-//            | { (req, resp) in (readByteBufferAllString(resp.body), req.url) }
-
-        let syncRequestToBodyPipeline = buildPipeline(forInputType: HTTPClient.Request.self)
-            | ensureAllowedURL
-            | Blocking { (req: HTTPClient.Request) throws -> (String, URL) in
-                let url = req.url
-                var resp: URLResponse?
-                let data = try NSURLConnection.sendSynchronousRequest(URLRequest(url: url), returning: &resp)
-                return (String(data: data, encoding: .utf8) ?? "", url) }
+        var requestToBodyPipeline: Pipeline<HTTPClient.Request, (String, URL)>!
+        switch condition {
+        case .syncURLConnection:
+            requestToBodyPipeline = buildPipeline(forInputType: HTTPClient.Request.self)
+                | Blocking { (req: HTTPClient.Request) throws -> (String, URL) in
+                    let url = req.url
+                    var resp: URLResponse?
+                    let data = try NSURLConnection.sendSynchronousRequest(URLRequest(url: url), returning: &resp)
+                    return (String(data: data, encoding: .utf8) ?? "", url) }
+        case .asyncHTTPClientInScope:
+            requestToBodyPipeline = buildPipeline(forInputType: HTTPClient.Request.self)
+                | Promising { el in { req in
+                    asyncHTTPClient!.execute(request: req, eventLoop: .delegate(on: el)).map{ (req, $0) } } }
+                | { (req, resp) in (readByteBufferAllString(resp.body), req.url) }
+        case .asyncHTTPClientInSharedDict:
+            requestToBodyPipeline = buildPipeline(forInputType:
+                HTTPClient.Request.self)
+                | WithData { (shared, owned) in
+                    { client in
+                        Promising { el in { req in
+                            client.execute(request: req, eventLoop: .delegate(on: el)).map{ (req, $0) } } }
+                        }(shared["client"] as! HTTPClient) }
+                | { (req, resp) in (readByteBufferAllString(resp.body), req.url) }
+        }
 
         var pipeline: Pipeline<HTTPClient.Request, ()>! = nil
-        pipeline = syncRequestToBodyPipeline
+        pipeline = buildPipeline(forInputType: HTTPClient.Request.self)
+            | ensureAllowedURL
+            |+ WithData { shared, owned in
+                return {
+//                    if let referrer = (owned["metadata"] as? [String: Any])?["referrer"] as? URL {
+//                        print("\(referrer.path) -> \($0.url.path)")
+//                    }
+                    return $0
+                }
+            }
+            | requestToBodyPipeline
             |+ { (body, requestURL) in
                 var lastEnd = body.startIndex
                 while true {
@@ -159,7 +189,8 @@ final class SwiftTaskTests: XCTestCase {
                             body.index(range.lowerBound, offsetBy: 6)
                             ..< body.index(range.upperBound, offsetBy: -1)])
                     let absoluteURL = URL(string: url, relativeTo: requestURL)!.absoluteString
-                    runner.addTask(PureTask(pipeline: pipeline, input: try HTTPClient.Request(url: absoluteURL)))
+                    runner.addTask(PureTask(pipeline: pipeline, input: try HTTPClient.Request(url: absoluteURL)),
+                                   metadata: ["referrer": requestURL])
                 }
             }
 
@@ -171,11 +202,19 @@ final class SwiftTaskTests: XCTestCase {
 
         runner.resume()
         runner.waitUntilQueueIsEmpty()
+        
+        if condition == .asyncHTTPClientInScope {
+            // swiftlint:disable force_try
+            try! asyncHTTPClient!.syncShutdown()
+        } else if condition == .asyncHTTPClientInSharedDict {
+            try! (runner.sharedData["client"] as! HTTPClient).syncShutdown()
+        }
+        
     }
 
     func testBenchmarkCrawling() {
       crawl(startURL: URL(string: "http://localhost:1234/bench/start")!,
-            allowedDomain: "localhost")
+            allowedDomain: "localhost", condition: .syncURLConnection)
     }
 
     static var allTests = [

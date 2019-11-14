@@ -9,4 +9,4 @@ public protocol UnlimitedQueue {
 
 typealias InMemoryQueue = UnlimitedQueue
 
-public protocol PersistentQueue: UnlimitedQueue where Elem: Packable {}
+//public protocol PersistentQueue: UnlimitedQueue where Elem: Packable {}
