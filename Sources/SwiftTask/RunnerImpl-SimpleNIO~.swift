@@ -89,17 +89,17 @@ public class SimpleNIORunner: Runner {
             }
         }
 
-        fileprivate func addTask<T: Task>(_ task: T, metadata: [String: Any]?, options: [String: Any]?) {
+        fileprivate func addTask(_ task: GeneralizedTask, metadata: [String: Any]?, options: [String: Any]?) {
             self.localLoop.execute {
                 var item: PendingTaskItem!
                 if task.pipeline.filters.contains(where: { $0.filter.withExtraData }) {
                     let sharedDict = SimpleSafeDictionary()
-                    item = PendingTaskItem(GeneralizedTask(from: task), sharedDict)
+                    item = PendingTaskItem(task, sharedDict)
                     if let metadata = metadata {
                         sharedDict["metadata"] = metadata
                     }
                 } else {
-                    item = PendingTaskItem(GeneralizedTask(from: task), nil)
+                    item = PendingTaskItem(task, nil)
                 }
                 self.pendingTaskQueue.enqueue(item)
                 
@@ -252,7 +252,7 @@ public class SimpleNIORunner: Runner {
 
     }
 
-    public func addTask<T: Task>(_ task: T, metadata: [String: Any]? = nil, options: [String: Any]? = nil) {
+    public func addTask(_ task: GeneralizedTask, metadata: [String: Any]? = nil, options: [String: Any]? = nil) {
         self.manager.addTask(task, metadata: metadata, options: options)
     }
 

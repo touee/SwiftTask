@@ -67,16 +67,16 @@ public class SingleThreadRunner: Runner {
         }
     }
 
-    public func addTask<T: Task>(_ task: T, metadata: [String : Any]? = nil, options: [String: Any]? = nil) {
+    public func addTask(_ task: GeneralizedTask, metadata: [String : Any]? = nil, options: [String: Any]? = nil) {
         var item: QueueItem!
         if task.pipeline.filters.contains(where: { $0.filter.withExtraData }) {
             let sharedDict = SimpleSafeDictionary()
-            item = QueueItem(GeneralizedTask(from: task), sharedDict)
+            item = QueueItem(task, sharedDict)
             if let metadata = metadata {
                 sharedDict["metadata"] = metadata
             }
         } else {
-            item = QueueItem(GeneralizedTask(from: task), nil)
+            item = QueueItem(task, nil)
         }
         self.queue.enqueue(item)
     }

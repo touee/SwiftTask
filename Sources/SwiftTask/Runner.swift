@@ -1,6 +1,6 @@
 public protocol Runner {
     // metadata can be accessed via owned["metadata"]
-    func addTask<T: Task>(_ task: T, metadata: [String: Any]?, options: [String: Any]?)
+    func addTask(_ task: GeneralizedTask, metadata: [String: Any]?, options: [String: Any]?)
 
     func resume()
     func waitUntilQueueIsEmpty()
@@ -9,4 +9,10 @@ public protocol Runner {
     var errorHandler: ((GeneralizedTask, StringKeyedSafeDictionary?, Error) -> Void)? { get set }
 
     var sharedData: StringKeyedSafeDictionary { get set }
+}
+
+public extension Runner {
+    func addTask<T: Task>(_ task: T, metadata: [String: Any]? = nil, options: [String: Any]? = nil) {
+        self.addTask(GeneralizedTask(from: task), metadata: metadata, options: options)
+    }
 }
