@@ -67,7 +67,7 @@ public class SingleThreadRunner: Runner {
         }
     }
 
-    public func addTask(_ task: GeneralizedTask, metadata: [String : Any]? = nil, options: [String: Any]? = nil) {
+    public func addTask(_ task: GeneralizedTask, metadata: Any? = nil, options: [String: Any]? = nil) {
         var item: QueueItem!
         if task.pipeline.filters.contains(where: { $0.filter.withExtraData }) {
             let sharedDict = SimpleSafeDictionary()

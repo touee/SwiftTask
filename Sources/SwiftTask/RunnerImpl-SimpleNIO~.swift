@@ -89,7 +89,7 @@ public class SimpleNIORunner: Runner {
             }
         }
 
-        fileprivate func addTask(_ task: GeneralizedTask, metadata: [String: Any]?, options: [String: Any]?) {
+        fileprivate func addTask(_ task: GeneralizedTask, metadata: Any?, options: [String: Any]?) {
             self.localLoop.execute {
                 var item: PendingTaskItem!
                 if task.pipeline.filters.contains(where: { $0.filter.withExtraData }) {
@@ -252,7 +252,7 @@ public class SimpleNIORunner: Runner {
 
     }
 
-    public func addTask(_ task: GeneralizedTask, metadata: [String: Any]? = nil, options: [String: Any]? = nil) {
+    public func addTask(_ task: GeneralizedTask, metadata: Any? = nil, options: [String: Any]? = nil) {
         self.manager.addTask(task, metadata: metadata, options: options)
     }
 
