@@ -1,6 +1,6 @@
 public protocol Runner {
     // metadata can be accessed via owned["metadata"]
-    func addTask(_ task: GeneralizedTask, metadata: Any?, options: [String: Any]?)
+    func addTask(_ task: GeneralizedTask, options: [String: Any]?)
 
     func resume()
     func waitUntilQueueIsEmpty()
@@ -12,7 +12,7 @@ public protocol Runner {
 }
 
 public extension Runner {
-    func addTask<T: Task>(_ task: T, metadata: Any? = nil, options: [String: Any]? = nil) {
-        self.addTask(GeneralizedTask(from: task), metadata: metadata, options: options)
+    func addTask<T: Task>(_ task: T, options: [String: Any]? = nil) {
+        self.addTask(GeneralizedTask(from: task), options: options)
     }
 }

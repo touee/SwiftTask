@@ -89,15 +89,14 @@ public class SimpleNIORunner: Runner {
             }
         }
 
-        fileprivate func addTask(_ task: GeneralizedTask, metadata: Any?, options: [String: Any]?) {
+        fileprivate func addTask(_ task: GeneralizedTask, options: [String: Any]?) {
             self.localLoop.execute {
                 var item: PendingTaskItem!
                 if task.pipeline.filters.contains(where: { $0.filter.withExtraData }) {
-                    let sharedDict = SimpleSafeDictionary()
-                    item = PendingTaskItem(task, sharedDict)
-                    if let metadata = metadata {
-                        sharedDict["metadata"] = metadata
-                    }
+                    let ownedDict = SimpleSafeDictionary()
+                    ownedDict["metadata"] = task.metadata
+                    ownedDict["input"] = task.input
+                    item = PendingTaskItem(task, ownedDict)
                 } else {
                     item = PendingTaskItem(task, nil)
                 }
@@ -252,8 +251,8 @@ public class SimpleNIORunner: Runner {
 
     }
 
-    public func addTask(_ task: GeneralizedTask, metadata: Any? = nil, options: [String: Any]? = nil) {
-        self.manager.addTask(task, metadata: metadata, options: options)
+    public func addTask(_ task: GeneralizedTask, options: [String: Any]? = nil) {
+        self.manager.addTask(task, options: options)
     }
 
     fileprivate func reportNoTasksRemain() {

@@ -43,7 +43,7 @@ final class SwiftTaskTests: XCTestCase {
 
         func step(_ current: Int) {
             if current < total {
-                runner.addTask(PureTask(pipeline: pipeline, input: current), metadata: nil, options: nil)
+                runner.addTask(PureTask(pipeline: pipeline, input: current), options: nil)
             } else {
                 XCTAssertEqual(current, total)
                 //                XCTAssertTrue(false)
@@ -168,9 +168,9 @@ final class SwiftTaskTests: XCTestCase {
             | ensureAllowedURL
             |+ WithData { shared, owned in
                 return {
-//                    if let referrer = (owned["metadata"] as? [String: Any])?["referrer"] as? URL {
-//                        print("\(referrer.path) -> \($0.url.path)")
-//                    }
+                    if let referrer = (owned["metadata"] as? [String: Any])?["referrer"] as? URL {
+                        print("\(referrer.path) -> \($0.url.path)")
+                    }
                     return $0
                 }
             }
@@ -189,8 +189,9 @@ final class SwiftTaskTests: XCTestCase {
                             body.index(range.lowerBound, offsetBy: 6)
                             ..< body.index(range.upperBound, offsetBy: -1)])
                     let absoluteURL = URL(string: url, relativeTo: requestURL)!.absoluteString
-                    runner.addTask(PureTask(pipeline: pipeline, input: try HTTPClient.Request(url: absoluteURL)),
-                                   metadata: ["referrer": requestURL])
+                    runner.addTask(PureTask(pipeline: pipeline,
+                                            input: try HTTPClient.Request(url: absoluteURL),
+                                            metadata: ["referrer": requestURL]))
                 }
             }
 
