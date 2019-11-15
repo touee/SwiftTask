@@ -15,7 +15,9 @@ public struct Promising<In, Out> {
 }
 
 public struct WithData<T> {
-    public let innerFilter: (StringKeyedSafeDictionary, StringKeyedSafeDictionary) -> T
+    public typealias InnerFilter = (StringKeyedSafeDictionary, StringKeyedSafeDictionary) -> T
+    public let innerFilter: InnerFilter
+    public init(_ innerFilter: @escaping InnerFilter) { self.innerFilter = innerFilter }
 }
 
 public struct GeneralizedFilter {
