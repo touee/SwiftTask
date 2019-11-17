@@ -94,8 +94,15 @@ public class SimpleNIORunner: Runner {
                 var item: PendingTaskItem!
                 if task.pipeline.filters.contains(where: { $0.filter.withExtraData }) {
                     let ownedDict = SimpleSafeDictionary()
-                    ownedDict["metadata"] = task.metadata
-                    ownedDict["input"] = task.input
+                    if let ownedData = task.ownedData {
+                        for (key, value) in ownedData {
+                            if key.first == "$" {
+                                fatalError(#"Key of custom owned data can't start with "$""#)
+                            }
+                            ownedDict[key] = value
+                        }
+                    }
+                    ownedDict["$input"] = task.input
                     item = PendingTaskItem(task, ownedDict)
                 } else {
                     item = PendingTaskItem(task, nil)

@@ -4,25 +4,25 @@ public protocol Task {
 
     var pipeline: Pipeline<In, Out> { get }
     var input: In { get }
-    var metadata: Any? { get }
+    var ownedData: [String: Any]? { get }
 }
 
 public struct PureTask<In, Out>: Task {
     public let pipeline: Pipeline<In, Out>
     public let input: In
-    public let metadata: Any?
+    public let ownedData: [String: Any]?
 
-    public init(pipeline: Pipeline<In, Out>, input: In, metadata: Any? = nil) {
+    public init(pipeline: Pipeline<In, Out>, input: In, ownedData: [String: Any]? = nil) {
         self.pipeline = pipeline
         self.input = input
-        self.metadata = metadata
+        self.ownedData = ownedData
     }
 }
 
 public struct GeneralizedTask {
     public let pipeline: GeneralizedPipeline
     public let input: Any
-    public let metadata: Any?
+    public let ownedData: [String: Any]?
 
 //    public var inputType: Any.Type {
 //        return pipeline.inputType
@@ -34,6 +34,6 @@ public struct GeneralizedTask {
     public init<T: Task>(from task: T) {
         self.pipeline = GeneralizedPipeline(from: task.pipeline)
         self.input = task.input
-        self.metadata = task.metadata
+        self.ownedData = task.ownedData
     }
 }

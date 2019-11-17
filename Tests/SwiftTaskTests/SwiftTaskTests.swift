@@ -191,7 +191,7 @@ final class SwiftTaskTests: XCTestCase {
                     let absoluteURL = URL(string: url, relativeTo: requestURL)!.absoluteString
                     runner.addTask(PureTask(pipeline: pipeline,
                                             input: try HTTPClient.Request(url: absoluteURL),
-                                            metadata: ["referrer": requestURL]))
+                                            ownedData: ["metadata":["referrer": requestURL]]))
                 }
             }
 
