@@ -242,6 +242,8 @@ public class SimpleNIORunner: Runner {
     private var manager: TaskManager! = nil
 
     private let waitGroup = DispatchGroup()
+    private var isWaiting = false
+    private let isWaitingLock = Lock()
 
     public init(eventLoopGroupProvider: EventLoopGroupProvider) {
 
@@ -254,8 +256,6 @@ public class SimpleNIORunner: Runner {
 //        let schedulerLoop = MultiThreadedEventLoopGroup(numberOfThreads: 1).next()
         self.manager = TaskManager(on: runnerLoop, runner: self, controlling: self.eventLoopGroup)
 
-        self.waitGroup.enter()
-
     }
 
     public func addTask(_ task: GeneralizedTask, options: [String: Any]? = nil) {
@@ -263,11 +263,23 @@ public class SimpleNIORunner: Runner {
     }
 
     fileprivate func reportNoTasksRemain() {
-        self.waitGroup.leave()
+        self.isWaitingLock.withLockVoid {
+            if self.isWaiting {
+                self.isWaiting = false
+                self.waitGroup.leave()
+            }
+        }
+        
     }
 
     public func resume() {
-        self.manager.resumePendingManager()
+        self.isWaitingLock.withLockVoid {
+            if !self.isWaiting {
+                self.isWaiting = true
+                self.waitGroup.enter()
+                self.manager.resumePendingManager()
+            }
+        }
     }
 
     public func waitUntilQueueIsEmpty() {
