@@ -6,7 +6,7 @@ public typealias PromisingFilter<In, Out> = (EventLoop) -> (In) throws -> EventL
 
 public struct Blocking<In, Out> {
     public let filter: Filter<In, Out>
-    init(_ filter: @escaping Filter<In, Out>) { self.filter = filter }
+    public init(_ filter: @escaping Filter<In, Out>) { self.filter = filter }
 }
 
 public struct Promising<In, Out> {
